@@ -13,6 +13,10 @@ extend-exclude = ["migrations/versions"]
 select = ["E", "F", "W", "I", "B", "UP", "SIM", "ASYNC", "RUF"]
 ignore = ["UP042", "UP047", "RUF005", "ASYNC109", "SIM102", "SIM103", "E501", "B008", "RUF001", "RUF002", "RUF003", "SIM105", "B904", "RUF012", "ASYNC230", "ASYNC240"]
 
+[tool.ruff.lint.per-file-ignores]
+# Lambdas passed to _call() are awaited immediately inside the same loop iteration.
+"app/services/group_tests.py" = ["B023"]
+
 [tool.ruff.lint.isort]
 known-first-party = ["app"]
 

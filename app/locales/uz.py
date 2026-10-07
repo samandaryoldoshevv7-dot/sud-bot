@@ -91,7 +91,6 @@ TEXTS: dict[str, str] = {
     "emp.btn.admin_panel": "👨‍💼 Admin panel",
     "emp.btn.start_test": "▶️ TESTNI BOSHLASH",
     "emp.btn.continue_test": "▶️ Davom ettirish",
-    "emp.btn.retake": "🔁 Qayta topshirish",
     "emp.btn.view_result": "📊 Natijani ko'rish",
     "emp.btn.corrections": "📋 Xatolarni ko'rish",
     "emp.no_tests": "📭 Hozircha siz uchun ochiq test yo'q.",
@@ -149,6 +148,8 @@ TEXTS: dict[str, str] = {
     "emp.start_error.not_in_group": "⛔️ Bu test boshqa guruh xodimlari uchun.",
     "emp.start_error.already_completed": "✅ Siz bu testni allaqachon topshirgansiz. Qayta topshirishga ruxsat yo'q.",
     "emp.start_error.no_questions": "⚠️ Testda savollar yo'q.",
+    "emp.start_error.group_only": "👥 Bu test guruhning o'zida ishlanadi. Guruhdagi savollarga javob bering.",
+    "emp.test_card.group_mode": "👥 Bu test guruhda ishlanadi: guruhdagi savollar ostidagi A/B/C/D tugmalarini bosing.",
     "reminder.body": "⏰ <b>Eslatma!</b>\n\n«{title}» testini yakunlash muddati: <b>{deadline}</b>.\nIltimos, testni o'z vaqtida topshiring.",
     "announce.group_header": "📢 <b>YANGI TEST E'LON QILINDI</b>",
     "announce.dm_header": "👋 Assalomu alaykum!\nSiz uchun yangi test mavjud.",
@@ -167,6 +168,39 @@ TEXTS: dict[str, str] = {
         "📈 O'rtacha ball: <b>{avg}</b>\n"
         "📊 Qatnashish: <b>{rate}</b>"
     ),
+    # ------------------------------------------------------------------ tests inside a group
+    "gt.header": (
+        "📝 <b>YANGI TEST BOSHLANDI</b>\n\n"
+        "📚 Test: <b>{title}</b>\n"
+        "❓ Savollar: <b>{n} ta</b>\n"
+        "⏰ Muddat: <b>{duration}</b>\n"
+        "▶️ Boshlanish: {start}\n"
+        "🏁 Tugash vaqti: <b>{end}</b>\n"
+        "🎯 O'tish bali: {passing}%\n\n"
+        "Quyidagi savollarga A/B/C/D tugmalari orqali javob bering. "
+        "<b>Har bir savolga faqat bir marta javob berish mumkin</b> — javobni o'zgartirib bo'lmaydi."
+    ),
+    "gt.header_finished": "⏰ <b>TEST MUDDATI TUGADI</b>\n\n📚 Test: <b>{title}</b>\n❓ Savollar: {n} ta\n🏁 Yopildi: {end}",
+    "gt.participants": "👥 Qatnashmoqda: <b>{n}</b>",
+    "gt.choose": "Javobni tanlang 👇",
+    "gt.answered_count": "👥 Javob berdi: {n}",
+    "gt.final_results": "YAKUNIY NATIJA",
+    "gt.total_answered": "👥 Jami javoblar: {n}",
+    "gt.closed_summary": "⏰ <b>TEST MUDDATI TUGADI</b>\n\n«{title}»\n👥 Boshlaganlar: {started}\n✅ Tugatganlar: {completed}\n\nNatijalar administratorga yuborildi.",
+    "gt.alert.started": "▶️ Test boshlandi! Javob berilgan: {done}/{total}.\nSavollar shu guruhda. Har bir savolga faqat bir marta javob bera olasiz.",
+    "gt.alert.already_finished": "✅ Siz bu testni allaqachon yakunlagansiz.",
+    "gt.alert.duplicate": "⚠️ Bu savolga siz allaqachon javob bergansiz.",
+    "gt.alert.your_choice": "🔒 Tanlangan: {letter}",
+    "gt.alert.accepted": "✅ Javobingiz qabul qilindi.\n🔒 Tanlangan: {selected}",
+    "gt.alert.correct": "✅ To'g'ri! Javob qabul qilindi.\nSizning javobingiz: {selected}",
+    "gt.alert.wrong": "❌ Javob qabul qilindi.\nSizning javobingiz: {selected}\nTo'g'ri javob: {correct}",
+    "gt.alert.finished": "🏁 Test yakunlandi: {c}/{total} ({score})",
+    "gt.alert.finished_hidden": "🏁 Barcha savollarga javob berdingiz. Rahmat!",
+    "gt.alert.not_started": "⏳ Test hali boshlanmagan.",
+    "gt.alert.expired": "⏰ TEST MUDDATI TUGADI. Javob qabul qilinmaydi.",
+    "gt.alert.blocked": "⛔️ Sizning testda qatnashish huquqingiz o'chirilgan.",
+    "gt.alert.pending": "⏳ Avval administrator sizni tasdiqlashi kerak. Botga shaxsiy /start yozing.",
+    "gt.alert.invalid": "Bu tugma eskirgan.",
     # ------------------------------------------------------------------ groups (in-group)
     "group.registered": "✅ «{title}» guruhi ro'yxatga olindi. Test e'lonlari shu yerga yuboriladi.",
     "group.reactivated": "✅ «{title}» guruhi qayta faollashtirildi.",
@@ -241,6 +275,10 @@ TEXTS: dict[str, str] = {
     "mat.btn.text_done": "✅ Matn tugadi, davom etish",
     "mat.btn.open": "📂 Materialni ochish",
     "mat.btn.generate": "🧠 Savollar yaratish (AI)",
+    "mat.btn.quick_test": "⚡ Shu materialdan test tuzish",
+    "mat.quick_test_count": "⚡ <b>{title}</b> asosida test.\n\nNechta savol bo'lsin? Savollar faqat shu material matnidan olinadi.",
+    "mat.quick_test_where": "Test qayerda ishlanadi?\n(Muddat: e'lon qilingandan boshlab 24 soat, natija test oxirida ko'rsatiladi.)",
+    "gen.auto_started": "🧠 Material asosida avtomatik ravishda {n} ta savol tuzilmoqda (faqat siz yuklagan matndan, har biri manba bilan tekshiriladi)...",
     "mat.btn.questions": "🗂 Savollarni ko'rish",
     "mat.btn.reprocess": "🔄 Qayta ishlash",
     "mat.btn.archive": "🗄 Arxivlash",
@@ -368,7 +406,10 @@ TEXTS: dict[str, str] = {
     "wiz.news": "Savollarning necha foizi yangiliklardan bo'lsin? (faol yangiliklar: {n})\nRaqam yuborishingiz ham mumkin.",
     "wiz.news_only": "Material tanlanmadi — barcha savollar yangiliklardan olinadi.",
     "wiz.focus": "Asosiy mavzu yoki kalit so'zlar (ixtiyoriy).\nMasalan: <i>protsessual muddatlar</i>",
-    "wiz.audience": "Test kimlar uchun?",
+    "wiz.audience": "Test qayerda ishlanadi?\n\n👥 <b>Guruhda</b> — savollar guruhga chiqadi, xodimlar A/B/C/D tugmalari bilan shu yerning o'zida javob beradi (tavsiya).\n🤖 <b>Shaxsiy chatda</b> — har bir xodim bot bilan alohida ishlaydi.",
+    "wiz.in_group": "👥 Guruhda: {g} ({n})",
+    "wiz.in_group_summary": "👥 «{g}» guruhining o'zida",
+    "wiz.private_mode": "🤖 Shaxsiy chatda (barcha faol xodimlar)",
     "wiz.all_employees": "👥 Barcha faol xodimlar",
     "wiz.start": "Boshlanish vaqti: «Hozir» tugmasini bosing yoki sanani yuboring (KK.OO.YYYY SS:DD), masalan <i>07.10.2026 10:00</i>.",
     "wiz.now": "▶️ Hozir",
@@ -376,7 +417,6 @@ TEXTS: dict[str, str] = {
     "wiz.rand_q": "Savollar tartibi har bir xodim uchun aralashtirilsinmi?",
     "wiz.rand_o": "Javob variantlari aralashtirilsinmi?",
     "wiz.reveal": "To'g'ri javoblar qachon ko'rsatilsin?",
-    "wiz.retakes": "Testni qayta topshirishga ruxsat berilsinmi?",
     "wiz.passing": "O'tish bali (%) — tugmani tanlang yoki raqam yuboring:",
     "wiz.btn.next": "➡️ Davom etish",
     "wiz.btn.create": "✅ Testni yaratish",
@@ -396,7 +436,6 @@ TEXTS: dict[str, str] = {
         "🔀 Savollarni aralashtirish: {rand_q}\n"
         "🔀 Variantlarni aralashtirish: {rand_o}\n"
         "👁 Javoblarni ko'rsatish: {reveal}\n"
-        "🔁 Qayta topshirish: {retakes}\n"
         "✅ O'tish bali: <b>{passing}%</b>\n\n"
         "Yaratishdan so'ng savollar avval savollar bankidan tanlanadi, yetmasa AI yordamida faqat "
         "yuklangan manbalar asosida yaratiladi. So'ng ularni ko'rib chiqib tasdiqlaysiz."
@@ -439,7 +478,18 @@ TEXTS: dict[str, str] = {
     "tests.btn.report_xlsx": "📈 Excel hisobot",
     "tests.btn.report_csv": "📄 CSV",
     "tests.btn.announce": "📢 Guruhlarga qayta e'lon",
-    "tests.btn.cancel_attempt": "♻️ Urinishni bekor qilish (qayta topshirishga ruxsat)",
+    "tests.btn.start_in_group": "▶️ Guruhda boshlash",
+    "tests.btn.all_answers": "🧾 Kim nimani tanladi",
+    "tests.no_groups": "Ro'yxatdan o'tgan faol guruh yo'q. Botni guruhga admin qilib qo'shing va guruhda /register yozing.",
+    "tests.choose_group": "▶️ <b>{title}</b>\n\nQaysi guruhda boshlansin?",
+    "tests.group_start_confirm": "▶️ <b>{title}</b> testi «{group}» guruhida boshlansinmi?\n\n❓ Savollar: {n}\n▶️ Boshlanish: {start}\n⏰ Tugash: {deadline}\n\nBot guruhga sarlavha va har bir savolni A/B/C/D tugmalari bilan yuboradi. Har bir xodim har bir savolga faqat bir marta javob bera oladi.",
+    "tests.group_starting": "▶️ Test guruhga yuborilmoqda...",
+    "tests.group_scheduled": "⏳ Test {start} da guruhda avtomatik boshlanadi.",
+    "tests.answers.header": "🧾 <b>{title}</b> — {n}/{total}-savol",
+    "tests.answers.none": "Bu savolga hali hech kim javob bermagan.",
+    "tests.answers.item": "{mark} {name} — tanladi: <b>{sel}</b>, to'g'ri: <b>{corr}</b>",
+    "tests.attempt.answers_title": "🧾 <b>Barcha javoblar:</b>",
+    "tests.attempt.answer_item": "{mark} {n}-savol: tanladi <b>{sel}</b>, to'g'ri <b>{corr}</b> — {q} | 🏷 {topic}",
     "tests.detail.title": "📝 <b>#{id} {title}</b>",
     "tests.detail.status": "Holat: {status}",
     "tests.detail.questions": "❓ Savollar: <b>{total}/{need}</b> (tasdiqlangan: {approved})",
@@ -447,7 +497,9 @@ TEXTS: dict[str, str] = {
     "tests.detail.sources": "📚 Manbalar: {s}",
     "tests.detail.audience": "👥 Auditoriya: {a}",
     "tests.detail.time": "▶️ {start} → ⏰ {deadline} ({duration})",
-    "tests.detail.flags": "🔀 Savollar: {rq} | 🔀 Variantlar: {ro} | 👁 {reveal} | 🔁 Qayta: {retakes}",
+    "tests.detail.flags": "🔀 Savollar: {rq} | 🔀 Variantlar: {ro} | 👁 {reveal}\n📍 {mode}",
+    "tests.mode.group": "Test guruhning o'zida ishlanadi",
+    "tests.mode.private": "Test bot bilan shaxsiy chatda ishlanadi",
     "tests.detail.focus": "🎯 Mavzu: {f}",
     "tests.detail.generating": "⏳ Savollar yig'ilmoqda/yaratilmoqda...",
     "tests.detail.generation_failed": "⚠️ Oxirgi yig'ish to'liq bo'lmadi: {error}",
@@ -488,11 +540,9 @@ TEXTS: dict[str, str] = {
     "tests.extend_prompt": "⏰ Joriy muddat: <b>{deadline}</b>\n\nYangi tugash vaqtini (KK.OO.YYYY SS:DD) yoki qo'shiladigan soatlar sonini yuboring:",
     "tests.extended": "✅ Yangi muddat: {deadline}",
     "tests.delete_confirm": "🗑 <b>{title}</b> testini o'chirasizmi?",
-    "tests.cancel_attempt_confirm": "♻️ Bu urinish bekor qilinsinmi? Xodim testni qaytadan topshira oladi. Urinish tarixi saqlanadi.",
-    "tests.attempt_cancelled": "♻️ Urinish bekor qilindi",
     "tests.part.header": "👥 <b>Test #{id}: {title}</b>",
     "tests.part.summary": (
-        "Jami xodimlar: <b>{total}</b>\n"
+        "📊 <b>TEST STATISTIKASI</b>\nJami xodimlar: <b>{total}</b>\n"
         "✅ Yakunlagan: <b>{done}</b> | ⏳ Jarayonda: <b>{prog}</b>\n"
         "⌛ Muddati o'tgan: <b>{exp}</b> | 🚫 Bekor: <b>{canc}</b>\n"
         "⚪️ Qatnashmagan: <b>{none}</b>\n"
@@ -649,6 +699,7 @@ TEXTS: dict[str, str] = {
     "settings.ranking_min_attempts": "🏆 Reyting uchun minimal testlar soni: {v}",
     "settings.reminder_hours_before": "⏰ Muddatdan necha soat oldin eslatma (0 = o'chiq): {v}",
     "settings.weak_topic_min_answers": "🏷 Mavzu tahlili uchun minimal javoblar: {v}",
+    "settings.auto_generate_questions": "🧠 Material yuklanganda avtomatik savollar soni (0 = o'chiq): {v}",
     "settings.btn.auto_approve_group_members": "👥 Guruh a'zolarini avto-tasdiqlash",
     "settings.btn.auto_approve_all": "🔓 Hammani avto-tasdiqlash",
     "settings.btn.notify_employees_dm": "✉️ Shaxsiy xabarnomalar",
@@ -656,6 +707,7 @@ TEXTS: dict[str, str] = {
     "settings.btn.ranking_min_attempts": "🏆 Reyting minimumi",
     "settings.btn.reminder_hours_before": "⏰ Eslatma vaqti",
     "settings.btn.weak_topic_min_answers": "🏷 Mavzu minimumi",
+    "settings.btn.auto_generate_questions": "🧠 Avto-savollar soni",
     "settings.env": (
         "🔧 <b>Muhit (o'zgartirish — Railway Variables orqali):</b>\n"
         "🕒 Vaqt zonasi: {tz}\n🤖 AI: {ai} ({model})\n🧭 Embedding: {emb}\n🗄 Vektor ombori: {backend}\n"

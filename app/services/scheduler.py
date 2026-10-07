@@ -19,8 +19,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.config import get_settings
 from app.locales import t
-from app.models import ParticipationStatus, Test, TestStatus
-from app.services import settings_service
+from app.models import DeliveryMode, ParticipationStatus, Test, TestStatus
+from app.services import group_tests, settings_service
 from app.services.attempts import expire_attempts
 from app.services.notifications import announce_test, notify_admins, remind_unfinished
 from app.services.test_builder import activate_due, expire_due
@@ -41,6 +41,23 @@ async def claim_marker(session: AsyncSession, test_id: int, column: str) -> bool
     ).scalar_one_or_none()
     await session.commit()
     return claimed is not None
+
+
+async def launch_test(bot: Bot, session_maker: async_sessionmaker[AsyncSession], test_id: int) -> None:
+    """Start an ACTIVE test exactly once: post it into its group, or announce it for private chats."""
+    async with session_maker() as session:
+        if not await claim_marker(session, test_id, "announced_at"):
+            return
+        test = await session.get(Test, test_id)
+        if test is None:
+            return
+        if test.delivery_mode == DeliveryMode.GROUP:
+            mode_group = True
+        else:
+            mode_group = False
+            await announce_test(bot, session, test)
+    if mode_group:
+        await group_tests.start_in_group(bot, session_maker, test_id)
 
 
 async def run_tick(bot: Bot | None, session_maker: async_sessionmaker[AsyncSession]) -> dict:
@@ -65,10 +82,10 @@ async def run_tick(bot: Bot | None, session_maker: async_sessionmaker[AsyncSessi
             .all()
         )
         for test_id in to_announce:
-            if await claim_marker(session, test_id, "announced_at"):
-                test = await session.get(Test, test_id)
-                if test:
-                    await announce_test(bot, session, test)
+            await launch_test(bot, session_maker, test_id)
+        # Group tests: finish interrupted posting, then close ended tests in their groups.
+        report["resumed_posts"] = await group_tests.resume_unsent_posts(bot, session_maker)
+        report["finalized_posts"] = await group_tests.finalize_posts(bot, session_maker)
 
         hours = int(await settings_service.get_value(session, "reminder_hours_before"))
         if hours > 0:
@@ -156,3 +173,16 @@ async def scheduler_loop(bot: Bot, session_maker: async_sessionmaker[AsyncSessio
         except TimeoutError:
             pass
     logger.info("Scheduler stopped")
+
+
+async def group_refresh_loop(bot: Bot, session_maker: async_sessionmaker[AsyncSession], stop: asyncio.Event) -> None:
+    """Keeps "👥 Javob berdi: N" counters on group question messages up to date (throttled)."""
+    while not stop.is_set():
+        try:
+            await group_tests.refresh_counters(bot, session_maker)
+        except Exception:
+            logger.exception("Group counter refresh failed")
+        try:
+            await asyncio.wait_for(stop.wait(), timeout=15)
+        except TimeoutError:
+            pass

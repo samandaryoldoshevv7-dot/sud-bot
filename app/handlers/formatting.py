@@ -3,7 +3,17 @@
 from __future__ import annotations
 
 from app.locales import t
-from app.models import AnswerReveal, AttemptStatus, Test, TestAttempt, TestQuestion, TestStatus, User, UserAnswer
+from app.models import (
+    AnswerReveal,
+    AttemptStatus,
+    DeliveryMode,
+    Test,
+    TestAttempt,
+    TestQuestion,
+    TestStatus,
+    User,
+    UserAnswer,
+)
 from app.services.attempts import displayed_options
 from app.utils.text import esc, pct, progress_bar, truncate
 from app.utils.time import fmt_dt, fmt_duration, fmt_hours, utcnow
@@ -36,6 +46,8 @@ def employee_test_card(test: Test, attempt: TestAttempt | None) -> str:
     ]
     if test.description:
         lines += ["", esc(test.description)]
+    if test.delivery_mode == DeliveryMode.GROUP:
+        lines += ["", t("emp.test_card.group_mode")]
     if attempt is not None:
         lines.append("")
         if attempt.status == AttemptStatus.IN_PROGRESS:

@@ -6,13 +6,15 @@ import logging
 
 from aiogram import Bot, F, Router
 from aiogram.filters import JOIN_TRANSITION, LEAVE_TRANSITION, ChatMemberUpdatedFilter, Command
-from aiogram.types import ChatMemberUpdated, Message
+from aiogram.types import CallbackQuery, ChatMemberUpdated, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.keyboards.callbacks import AdminCB
+from app.keyboards.callbacks import AdminCB, GroupAnsCB, GroupStartCB
 from app.keyboards.common import kb
 from app.locales import t
+from app.services import group_tests
 from app.services import groups as group_service
+from app.services.group_tests import GroupAnswerCode
 from app.services.notifications import deep_link, notify_admins
 from app.services.users import is_admin_telegram_id, upsert_user
 from app.utils.text import esc
@@ -93,3 +95,45 @@ async def member_left(event: ChatMemberUpdated, session: AsyncSession) -> None:
     if group and not member.is_bot:
         user = await upsert_user(session, member)
         await group_service.mark_membership(session, group, user, False)
+
+
+# ------------------------------------------------------------------------------ tests inside the group
+
+
+@router.callback_query(GroupStartCB.filter())
+async def cb_group_start(callback: CallbackQuery, callback_data: GroupStartCB, session: AsyncSession) -> None:
+    code, attempt = await group_tests.group_start(session, callback.from_user, callback_data.p)
+    if code == GroupAnswerCode.ACCEPTED and attempt is not None:
+        text = t("gt.alert.started", done=attempt.answered_count, total=attempt.total_questions)
+    elif code == GroupAnswerCode.DUPLICATE:
+        text = t("gt.alert.already_finished")
+    else:
+        text = t(f"gt.alert.{code.value}")
+    await callback.answer(text, show_alert=True)
+
+
+@router.callback_query(GroupAnsCB.filter())
+async def cb_group_answer(callback: CallbackQuery, callback_data: GroupAnsCB, session: AsyncSession, bot: Bot) -> None:
+    # Identity comes ONLY from Telegram (callback.from_user), never from callback data.
+    result = await group_tests.submit_group_answer(session, callback.from_user, callback_data.m, callback_data.o)
+    await callback.answer(group_tests.answer_alert(result), show_alert=True)
+    if result.code == GroupAnswerCode.ACCEPTED and result.finished and result.attempt is not None:
+        await _send_private_result(bot, session, callback.from_user.id, result)
+
+
+async def _send_private_result(bot: Bot, session: AsyncSession, telegram_id: int, result) -> None:
+    """If the employee has opened the bot privately, send the detailed result there too."""
+    from app.handlers.formatting import result_text
+    from app.keyboards.callbacks import EmpCB
+    from app.models import AnswerReveal, Test, User
+    from app.services.notifications import safe_send
+
+    attempt = result.attempt
+    user = await session.get(User, attempt.user_id)
+    test = await session.get(Test, attempt.test_id)
+    if user is None or test is None or not user.has_private_chat or test.answer_reveal == AnswerReveal.NEVER:
+        return
+    markup = None
+    if attempt.incorrect_count:
+        markup = kb([(t("emp.btn.corrections"), EmpCB(a="corr", id=attempt.id))])
+    await safe_send(bot, telegram_id, result_text(test, attempt), markup)

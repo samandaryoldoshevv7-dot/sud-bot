@@ -129,3 +129,11 @@ def test_dynamic_translation_keys_exist():
                    "verifier_disagrees", "low_confidence", "quality_rejected", "explanation_unsupported", "ai_error"):  # fmt: skip
         keys.append(f"gen.reason.{reason}")
     assert [k for k in keys if k not in TEXTS] == []
+
+
+def test_admin_ids_alias(monkeypatch):
+    from app.config.settings import Settings
+
+    monkeypatch.delenv("ADMIN_TELEGRAM_IDS", raising=False)
+    monkeypatch.setenv("ADMIN_IDS", "42,43")
+    assert Settings(_env_file=None).admin_ids == frozenset({42, 43})

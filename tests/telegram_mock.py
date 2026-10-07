@@ -35,10 +35,13 @@ class RecordingSession(BaseSession):
         if isinstance(method, GetMe):
             return User(id=42, is_bot=True, first_name="Court Bot", username="court_test_bot")
         if isinstance(method, (SendMessage, SendDocument)):
+            chat_id = int(method.chat_id)
             return Message(
                 message_id=next(_ids),
                 date=now,
-                chat=Chat(id=int(method.chat_id), type="private"),
+                chat=Chat(
+                    id=chat_id, type="private" if chat_id > 0 else "supergroup", title=None if chat_id > 0 else "Sud"
+                ),
                 text=getattr(method, "text", None) or "",
                 from_user=User(id=42, is_bot=True, first_name="Court Bot"),
             )
@@ -63,6 +66,9 @@ class RecordingSession(BaseSession):
 
     def texts(self) -> list[str]:
         return [m.text for m in self.requests if isinstance(m, (SendMessage, EditMessageText))]
+
+    def sent_to(self, chat_id: int) -> list[SendMessage]:
+        return [m for m in self.requests if isinstance(m, SendMessage) and int(m.chat_id) == chat_id]
 
     def alerts(self) -> list[str]:
         return [m.text or "" for m in self.requests if isinstance(m, AnswerCallbackQuery)]
@@ -91,14 +97,15 @@ def message_update(
     )
 
 
-def callback_update(user_id: int, data: str, first_name: str = "Ali") -> Update:
+def callback_update(user_id: int, data: str, first_name: str = "Ali", chat_id: int | None = None) -> Update:
     from aiogram.types import CallbackQuery
 
     user = User(id=user_id, is_bot=False, first_name=first_name)
+    chat = Chat(id=chat_id, type="supergroup", title="Sud") if chat_id else Chat(id=user_id, type="private")
     message = Message(
         message_id=next(_ids),
         date=datetime.now(UTC),
-        chat=Chat(id=user_id, type="private"),
+        chat=chat,
         from_user=User(id=42, is_bot=True, first_name="Court Bot"),
         text="previous",
     )

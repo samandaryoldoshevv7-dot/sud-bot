@@ -247,6 +247,25 @@ async def build_test_report_xlsx(session: AsyncSession, test_id: int) -> tuple[b
     _date_format(ws, [10])
     _style_sheet(ws, {4: 60, 5: 40, 6: 40, 8: 40, 9: 60})
 
+    ws = wb.create_sheet("Barcha javoblar")
+    ws.append(["Xodim", "Telegram ID", "Savol №", "Savol", "Tanlagan (ko'rgan harfi)", "Tanlagan variant",
+               "To'g'ri (ko'rgan harfi)", "To'g'ri variant", "Natija", "Vaqt"])  # fmt: skip
+    rows = await session.execute(
+        select(UserAnswer, TestQuestion, User)
+        .join(TestQuestion, TestQuestion.id == UserAnswer.test_question_id)
+        .join(User, User.id == UserAnswer.user_id)
+        .where(UserAnswer.test_id == test_id)
+        .order_by(User.full_name, User.first_name, UserAnswer.position)
+    )
+    for ans, tq, user in rows:
+        ws.append([
+            user.display_name, user.telegram_id, ans.position + 1, tq.question_text, ans.selected_display,
+            tq.options.get(ans.selected_option, ""), ans.correct_display or ans.correct_option,
+            tq.options.get(tq.correct_option, ""), "To'g'ri" if ans.is_correct else "Xato", _naive_local(ans.answered_at),
+        ])  # fmt: skip
+    _date_format(ws, [10])
+    _style_sheet(ws, {4: 60, 6: 40, 8: 40})
+
     ws = wb.create_sheet("Savollar tahlili")
     ws.append(["№", "Savol", "Mavzu", "Qiyinlik", "Javoblar", "To'g'ri", "To'g'ri %", "Manba"])
     for row in await test_question_stats(session, test_id):

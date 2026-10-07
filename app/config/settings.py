@@ -11,7 +11,7 @@ from typing import Literal
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from zoneinfo import ZoneInfo
 
-from pydantic import Field, SecretStr, field_validator
+from pydantic import AliasChoices, Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -25,7 +25,7 @@ class Settings(BaseSettings):
 
     # --- Telegram -----------------------------------------------------------------
     bot_token: SecretStr
-    admin_telegram_ids: str = ""
+    admin_telegram_ids: str = Field(default="", validation_alias=AliasChoices("ADMIN_TELEGRAM_IDS", "ADMIN_IDS"))
     bot_mode: Literal["polling", "webhook"] = "polling"
     webhook_base_url: str = ""
     webhook_path: str = "/telegram/webhook"
@@ -34,8 +34,9 @@ class Settings(BaseSettings):
 
     # --- Database -----------------------------------------------------------------
     database_url: SecretStr
-    db_pool_size: int = 5
-    db_max_overflow: int = 5
+    db_pool_size: int = 10
+    db_max_overflow: int = 20
+    db_pool_timeout: int = 30
     db_echo: bool = False
 
     # --- AI / LLM -----------------------------------------------------------------

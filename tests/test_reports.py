@@ -36,6 +36,7 @@ async def test_test_report_xlsx_contents(session_maker, session):
         "Qatnashmaganlar",
         "Barcha urinishlar",
         "Xato javoblar",
+        "Barcha javoblar",
         "Savollar tahlili",
     ]
     attempts = list(wb["Barcha urinishlar"].iter_rows(values_only=True))
@@ -48,6 +49,8 @@ async def test_test_report_xlsx_contents(session_maker, session):
     assert abs(record["Foiz"] - 66.67) < 0.01 and record["Holat"] == "Yakunlagan"
     not_participated = [r[0] for r in wb["Qatnashmaganlar"].iter_rows(min_row=2, values_only=True)]
     assert not_participated == ["Hisobot Qatnashmagan"]
+    every = list(wb["Barcha javoblar"].iter_rows(min_row=2, values_only=True))
+    assert len(every) == 3 and [r[8] for r in every].count("Xato") == 1
     wrong = list(wb["Xato javoblar"].iter_rows(min_row=2, values_only=True))
     assert len(wrong) == 1 and wrong[0][4].startswith("B)") and wrong[0][5].startswith("A)")
 
