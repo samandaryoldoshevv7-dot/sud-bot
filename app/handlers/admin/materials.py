@@ -494,10 +494,10 @@ async def _generate_to_bank(
             text = gen_summary_text(result.created, count, dict(result.rejected), result.error)
         except AIError as exc:
             logger.error("Generation failed", extra={"material_id": material_id, "error": str(exc)[:200]})
-            text = t("gen.failed", error=esc(str(exc)[:200]))
-        except Exception:
+            text = t("gen.failed", error=esc(_friendly_error(str(exc))))
+        except Exception as exc:
             logger.exception("Generation crashed", extra={"material_id": material_id})
-            text = t("gen.failed", error=t("errors.generic"))
+            text = t("gen.failed", error=esc(f"{type(exc).__name__}: {str(exc)[:200]}"))
     markup = kb([(t("gen.btn.review"), AdminCB(s="qb_mat", id=material_id, v="pending"))])
     try:
         await bot.edit_message_text(text, chat_id=chat_id, message_id=message_id, reply_markup=markup)
@@ -518,6 +518,21 @@ def gen_summary_text(created: int, requested: int, rejected: dict, error: str | 
 
 
 def _friendly_error(error: str) -> str:
+    """Translate internal/AI error codes into a clear Uzbek explanation for the admin."""
     known = {"no_source_chunks": t("gen.reason.no_source_chunks"), "ai_not_configured": t("ai.not_configured"),
-             "no_sources": t("gen.reason.no_sources"), "not_enough_questions": t("gen.reason.not_enough")}  # fmt: skip
-    return known.get(error, error[:200])
+             "no_sources": t("gen.reason.no_sources"), "not_enough_questions": t("gen.reason.not_enough"),
+             "interrupted_by_restart": t("gen.reason.interrupted")}  # fmt: skip
+    if error in known:
+        return known[error]
+    lowered = error.lower()
+    if "authentication" in lowered:
+        return t("ai.err.auth")
+    if "models unavailable" in lowered or "no usable groq model" in lowered:
+        return t("ai.err.model")
+    if "rate limit" in lowered:
+        return t("ai.err.rate_limit")
+    if "unreachable" in lowered:
+        return t("ai.err.unreachable")
+    if "invalid ai response" in lowered:
+        return t("ai.err.invalid_response")
+    return error[:200]

@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.ai.base import AIError
 from app.handlers.admin.common import show
+from app.handlers.admin.materials import _friendly_error
 from app.keyboards.callbacks import AdminCB
 from app.keyboards.common import back_menu_row, cancel_kb, confirm_kb, kb, pager
 from app.locales import t
@@ -378,7 +379,10 @@ async def cb_ai_explanation(callback: CallbackQuery, callback_data: AdminCB, ses
         supported, verification = await generator.verify_existing(source, q.question_text, q.options, q.correct_option)
     except AIError as exc:
         await show(
-            callback, t("gen.failed", error=esc(str(exc)[:200])), kb(back_menu_row("qb_v", id_=q.id)), answer=False
+            callback,
+            t("gen.failed", error=esc(_friendly_error(str(exc)))),
+            kb(back_menu_row("qb_v", id_=q.id)),
+            answer=False,
         )
         return
     if explanation is None or not supported:
@@ -439,10 +443,10 @@ async def _regenerate(
             if result.questions:
                 markup = kb([(t("qb.btn.open_new"), AdminCB(s="qb_v", id=result.questions[0].id))])
         except AIError as exc:
-            text = t("gen.failed", error=esc(str(exc)[:200]))
-        except Exception:
+            text = t("gen.failed", error=esc(_friendly_error(str(exc))))
+        except Exception as exc:
             logger.exception("Question regeneration crashed")
-            text = t("gen.failed", error=t("errors.generic"))
+            text = t("gen.failed", error=esc(f"{type(exc).__name__}: {str(exc)[:200]}"))
     try:
         await bot.edit_message_text(text, chat_id=chat_id, message_id=message_id, reply_markup=markup)
     except TelegramBadRequest:

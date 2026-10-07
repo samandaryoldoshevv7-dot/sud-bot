@@ -133,7 +133,8 @@ To'liq ro'yxat va izohlar: [`.env.example`](.env.example).
 | `ADMIN_TELEGRAM_IDS` | ✅ | — | Vergul bilan: `123456789,987654321`. **Adminlik faqat shu ro'yxatdan** |
 | `GROQ_API_KEY` | ✅* | — | *Bo'lmasa AI generatsiya o'chadi, faqat bankdagi tasdiqlangan savollar ishlatiladi |
 | `TIMEZONE` | | `Asia/Tashkent` | Ko'rsatish vaqt zonasi |
-| `GROQ_MODEL` | | `llama-3.3-70b-versatile` | Asosiy model |
+| `GROQ_MODEL` | | `openai/gpt-oss-120b` | Asosiy model (o'chirilgan bo'lsa avtomatik zaxiraga o'tadi) |
+| `GROQ_FALLBACK_MODELS` | | `openai/gpt-oss-20b,qwen/qwen3-32b,llama-3.1-8b-instant` | Zaxira modellar |
 | `GROQ_VALIDATION_MODEL` | | (= `GROQ_MODEL`) | Tekshiruv chaqiruvlari uchun alohida model |
 | `AI_MIN_CONFIDENCE` | | `0.7` | Mustaqil tekshiruvchining minimal ishonchi |
 | `AI_EXCERPT_MIN_SIMILARITY` | | `88` | AI iqtibosi va haqiqiy manba matni o'xshashligi (0–100) |

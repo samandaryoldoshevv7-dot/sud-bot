@@ -41,7 +41,8 @@ class Settings(BaseSettings):
     # --- AI / LLM -----------------------------------------------------------------
     ai_provider: Literal["groq"] = "groq"
     groq_api_key: SecretStr | None = None
-    groq_model: str = "llama-3.3-70b-versatile"
+    groq_model: str = "openai/gpt-oss-120b"
+    groq_fallback_models: str = "openai/gpt-oss-20b,qwen/qwen3-32b,llama-3.1-8b-instant"
     groq_validation_model: str = ""
     groq_temperature: float = 0.3
     groq_timeout_seconds: float = 60.0
@@ -104,6 +105,10 @@ class Settings(BaseSettings):
     @property
     def max_file_size_bytes(self) -> int:
         return self.max_file_size_mb * 1024 * 1024
+
+    @property
+    def fallback_models(self) -> list[str]:
+        return [m.strip() for m in self.groq_fallback_models.split(",") if m.strip()]
 
     @property
     def validation_model(self) -> str:
