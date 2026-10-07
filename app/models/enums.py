@@ -98,3 +98,10 @@ class ParticipationStatus(str, enum.Enum):
     COMPLETED = "COMPLETED"
     EXPIRED = "EXPIRED"
     CANCELLED = "CANCELLED"
+
+
+class DeliveryMode(str, enum.Enum):
+    """Where employees answer: shared question posts inside a Telegram group, or a private chat."""
+
+    GROUP = "group"
+    PRIVATE = "private"

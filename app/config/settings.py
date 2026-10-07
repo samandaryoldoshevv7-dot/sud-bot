@@ -11,7 +11,7 @@ from typing import Literal
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from zoneinfo import ZoneInfo
 
-from pydantic import Field, SecretStr, field_validator
+from pydantic import AliasChoices, Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -25,7 +25,7 @@ class Settings(BaseSettings):
 
     # --- Telegram -----------------------------------------------------------------
     bot_token: SecretStr
-    admin_telegram_ids: str = ""
+    admin_telegram_ids: str = Field(default="", validation_alias=AliasChoices("ADMIN_TELEGRAM_IDS", "ADMIN_IDS"))
     bot_mode: Literal["polling", "webhook"] = "polling"
     webhook_base_url: str = ""
     webhook_path: str = "/telegram/webhook"
@@ -34,14 +34,16 @@ class Settings(BaseSettings):
 
     # --- Database -----------------------------------------------------------------
     database_url: SecretStr
-    db_pool_size: int = 5
-    db_max_overflow: int = 5
+    db_pool_size: int = 10
+    db_max_overflow: int = 20
+    db_pool_timeout: int = 30
     db_echo: bool = False
 
     # --- AI / LLM -----------------------------------------------------------------
     ai_provider: Literal["groq"] = "groq"
     groq_api_key: SecretStr | None = None
-    groq_model: str = "llama-3.3-70b-versatile"
+    groq_model: str = "openai/gpt-oss-120b"
+    groq_fallback_models: str = "openai/gpt-oss-20b,qwen/qwen3-32b,llama-3.1-8b-instant"
     groq_validation_model: str = ""
     groq_temperature: float = 0.3
     groq_timeout_seconds: float = 60.0
@@ -104,6 +106,10 @@ class Settings(BaseSettings):
     @property
     def max_file_size_bytes(self) -> int:
         return self.max_file_size_mb * 1024 * 1024
+
+    @property
+    def fallback_models(self) -> list[str]:
+        return [m.strip() for m in self.groq_fallback_models.split(",") if m.strip()]
 
     @property
     def validation_model(self) -> str:

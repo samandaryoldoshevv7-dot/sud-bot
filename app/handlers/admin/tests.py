@@ -19,6 +19,7 @@ from app.keyboards.common import back_menu_row, cancel_kb, confirm_kb, kb, pager
 from app.locales import t
 from app.models import (
     AttemptStatus,
+    DeliveryMode,
     GenerationStatus,
     Group,
     ParticipationStatus,
@@ -29,13 +30,13 @@ from app.models import (
 )
 from app.reports.builder import build_test_report_csv, build_test_report_xlsx
 from app.services import attempts as attempt_service
-from app.services import background
+from app.services import background, group_tests
+from app.services import groups as group_service
 from app.services import test_builder as tb
 from app.services.ai_runtime import ai_available, make_generator
 from app.services.notifications import announce_test
-from app.services.scheduler import claim_marker
+from app.services.scheduler import launch_test
 from app.services.test_builder import TestStateError
-from app.statistics.dashboard import common_mistakes, test_question_stats
 from app.statistics.participation import participation
 from app.utils.text import esc, pct, truncate
 from app.utils.time import fmt_dt, fmt_duration, fmt_hours, parse_local_datetime, utcnow
@@ -135,7 +136,7 @@ async def render_test(target, session: AsyncSession, test_id: int) -> None:
             rq=_yn(test.randomize_questions),
             ro=_yn(test.randomize_options),
             reveal=t(f"reveal.{test.answer_reveal.value}"),
-            retakes=_yn(test.allow_retakes),
+            mode=t(f"tests.mode.{test.delivery_mode.value}"),
         ),
     ]
     if test.focus_query:
@@ -160,6 +161,7 @@ async def render_test(target, session: AsyncSession, test_id: int) -> None:
         rows.append([(t("tests.btn.delete"), AdminCB(s="tst_del", id=test.id))])
     elif test.status == TestStatus.READY:
         if test.published_at is None:
+            rows.append([(t("tests.btn.start_in_group"), AdminCB(s="tst_grp", id=test.id))])
             rows.append([(t("tests.btn.publish"), AdminCB(s="tst_pub", id=test.id))])
             rows.append(
                 [
@@ -447,6 +449,10 @@ async def cb_publish(callback: CallbackQuery, callback_data: AdminCB, session: A
 async def cb_publish_ok(
     callback: CallbackQuery, callback_data: AdminCB, session: AsyncSession, session_maker, bot: Bot
 ) -> None:
+    draft_test = await session.get(Test, callback_data.id)
+    if draft_test is not None and draft_test.status == TestStatus.READY and draft_test.published_at is None:
+        draft_test.delivery_mode = DeliveryMode.PRIVATE
+        await session.commit()
     try:
         test = await tb.publish(session, callback_data.id)
     except TestStateError as exc:
@@ -459,11 +465,66 @@ async def cb_publish_ok(
 
 
 async def _announce_now(session_maker: async_sessionmaker[AsyncSession], bot: Bot, test_id: int) -> None:
-    async with session_maker() as session:
-        if await claim_marker(session, test_id, "announced_at"):
-            test = await session.get(Test, test_id)
-            if test:
-                await announce_test(bot, session, test)
+    await launch_test(bot, session_maker, test_id)
+
+
+@router.callback_query(AdminCB.filter(F.s == "tst_grp"))
+async def cb_start_in_group(callback: CallbackQuery, callback_data: AdminCB, session: AsyncSession) -> None:
+    test = await session.get(Test, callback_data.id)
+    if test is None or test.status != TestStatus.READY:
+        await callback.answer(t("test_error.not_ready"), show_alert=True)
+        return
+    groups = await group_service.list_groups(session, active_only=True)
+    if not groups:
+        await callback.answer(t("tests.no_groups"), show_alert=True)
+        return
+    rows = [
+        [(f"👥 {truncate(g.title, 40)} ({n})", AdminCB(s="tst_grp_ok", id=test.id, v=str(g.id)))] for g, n in groups
+    ]
+    await show(callback, t("tests.choose_group", title=esc(test.title)), kb(*rows, back_menu_row("tst_v", id_=test.id)))
+
+
+@router.callback_query(AdminCB.filter(F.s == "tst_grp_ok"))
+async def cb_start_in_group_confirm(callback: CallbackQuery, callback_data: AdminCB, session: AsyncSession) -> None:
+    test = await session.get(Test, callback_data.id)
+    group = await session.get(Group, int(callback_data.v or 0))
+    if test is None or group is None:
+        await callback.answer(t("common.not_found"), show_alert=True)
+        return
+    await show(
+        callback,
+        t("tests.group_start_confirm", title=esc(test.title), group=esc(group.title), n=test.question_count,
+          start=fmt_dt(test.starts_at), deadline=fmt_dt(test.deadline_at)),
+        confirm_kb(AdminCB(s="tst_grp_go", id=test.id, v=str(group.id)), AdminCB(s="tst_v", id=test.id)),
+    )  # fmt: skip
+
+
+@router.callback_query(AdminCB.filter(F.s == "tst_grp_go"))
+async def cb_start_in_group_go(
+    callback: CallbackQuery, callback_data: AdminCB, session: AsyncSession, session_maker, bot: Bot
+) -> None:
+    test = await session.get(Test, callback_data.id)
+    group = await session.get(Group, int(callback_data.v or 0))
+    if test is None or group is None or not group.is_active:
+        await callback.answer(t("common.not_found"), show_alert=True)
+        return
+    if test.status != TestStatus.READY or test.published_at is not None:
+        await callback.answer(t("test_error.not_ready"), show_alert=True)
+        return
+    test.group_id = group.id
+    test.delivery_mode = DeliveryMode.GROUP
+    await session.commit()
+    try:
+        test = await tb.publish(session, test.id)
+    except TestStateError as exc:
+        await callback.answer(t(f"test_error.{exc.code}"), show_alert=True)
+        return
+    if test.status == TestStatus.ACTIVE:
+        await callback.answer(t("tests.group_starting"))
+        background.spawn(launch_test(bot, session_maker, test.id), name=f"group-test-{test.id}")
+    else:
+        await callback.answer(t("tests.group_scheduled", start=fmt_dt(test.starts_at)), show_alert=True)
+    await render_test(callback, session, test.id)
 
 
 @router.callback_query(AdminCB.filter(F.s == "tst_ann"))
@@ -657,7 +718,7 @@ async def cb_participant_attempt(callback: CallbackQuery, callback_data: AdminCB
         return
     user = await session.get(User, attempt.user_id)
     assert user is not None
-    wrong = await attempt_service.wrong_answers_for_attempt(session, attempt)
+    answers = await attempt_service.answers_for_attempt(session, attempt)
     lines = [
         t("tests.attempt.header", name=user_line(user), title=esc(attempt.test.title), no=attempt.attempt_no),
         t(
@@ -673,46 +734,23 @@ async def cb_participant_attempt(callback: CallbackQuery, callback_data: AdminCB
             completed=fmt_dt(attempt.completed_at),
         ),
     ]
-    if wrong:
-        lines += ["", t("tests.attempt.wrong_title")]
-        for answer, tq in wrong[:10]:
+    if answers:
+        lines += ["", t("tests.attempt.answers_title")]
+        for answer, tq in answers:
             lines.append(
                 t(
-                    "tests.attempt.wrong_item",
+                    "tests.attempt.answer_item",
+                    mark="✅" if answer.is_correct else "❌",
                     n=answer.position + 1,
-                    q=esc(truncate(tq.question_text, 160)),
-                    sel=answer.selected_option,
-                    corr=tq.correct_option,
+                    q=esc(truncate(tq.question_text, 110)),
+                    sel=answer.selected_display,
+                    corr=answer.correct_display or answer.correct_option,
                     topic=esc(tq.topic_name or "—"),
                 )
             )
-    rows = []
-    if attempt.status != AttemptStatus.CANCELLED:
-        rows.append([(t("tests.btn.cancel_attempt"), AdminCB(s="tst_ca", id=attempt.id, v=callback_data.v))])
-    rows.append([(t("emp_admin.btn.profile"), AdminCB(s="emp_v", id=user.id))])
+    rows = [[(t("emp_admin.btn.profile"), AdminCB(s="emp_v", id=user.id))]]
     rows.append(back_menu_row("tst_part", id_=int(callback_data.v or attempt.test_id), v="all"))
     await show(callback, "\n".join(lines), kb(*rows))
-
-
-@router.callback_query(AdminCB.filter(F.s == "tst_ca"))
-async def cb_cancel_attempt(callback: CallbackQuery, callback_data: AdminCB) -> None:
-    await show(
-        callback,
-        t("tests.cancel_attempt_confirm"),
-        confirm_kb(
-            AdminCB(s="tst_ca_ok", id=callback_data.id, v=callback_data.v),
-            AdminCB(s="tst_pu", id=callback_data.id, v=callback_data.v),
-        ),
-    )
-
-
-@router.callback_query(AdminCB.filter(F.s == "tst_ca_ok"))
-async def cb_cancel_attempt_ok(
-    callback: CallbackQuery, callback_data: AdminCB, session: AsyncSession, user: User
-) -> None:
-    await attempt_service.cancel_attempt(session, callback_data.id, f"cancelled by admin {user.telegram_id}")
-    await callback.answer(t("tests.attempt_cancelled"))
-    await cb_participant_attempt(callback, callback_data, session)
 
 
 @router.callback_query(AdminCB.filter(F.s == "tst_qs"))
@@ -721,27 +759,71 @@ async def cb_question_stats(callback: CallbackQuery, callback_data: AdminCB, ses
     if test is None:
         await callback.answer(t("common.not_found"), show_alert=True)
         return
-    stats = await test_question_stats(session, test.id)
-    mistakes = await common_mistakes(session, limit=5, test_id=test.id)
+    items = await group_tests.answers_by_question(session, test.id)
     lines = [t("tests.qstats.title", title=esc(test.title)), ""]
-    for row in sorted(stats, key=lambda r: r.percent if r.answers else 101)[:15]:
-        q = row.question
+    for n, item in enumerate(items, start=1):
+        q = item.question
+        total = len(item.answers)
+        correct = sum(1 for _, a in item.answers if a.is_correct)
+        counts: dict[str, int] = {}
+        for _, a in item.answers:
+            counts[a.selected_option] = counts.get(a.selected_option, 0) + 1
+        share = pct(correct / total * 100) if total else "—"
+        lines.append(f"<b>{n}-savol</b> — {share} ({correct}/{total})\n<i>{esc(truncate(q.question_text, 90))}</i>")
         lines.append(
-            f"#{q.position} {pct(row.percent) if row.answers else '—'} ({row.correct}/{row.answers}) — "
-            f"{esc(truncate(q.question_text, 90))}"
-        )
-    if mistakes:
-        lines += ["", t("stats.mistakes.title")]
-        for m in mistakes:
-            lines.append(
-                t(
-                    "stats.mistakes.item",
-                    q=esc(truncate(m.question.question_text, 100)),
-                    opt=f"{m.wrong_option}) {esc(truncate(m.question.options.get(m.wrong_option, ''), 60))}",
-                    n=m.times,
-                )
+            "    " + " | ".join(
+                f"{'ABCDE'[i]}{'✅' if o == q.correct_option else ''} — {counts.get(o, 0)}" for i, o in enumerate(item.opts)
             )
-    await show(callback, "\n".join(lines), kb(back_menu_row("tst_v", id_=test.id)))
+        )  # fmt: skip
+    if not items:
+        lines.append(t("common.empty"))
+    await show(
+        callback,
+        "\n".join(lines),
+        kb([(t("tests.btn.all_answers"), AdminCB(s="tst_ans", id=test.id, p=1))], back_menu_row("tst_v", id_=test.id)),
+    )
+
+
+@router.callback_query(AdminCB.filter(F.s == "tst_ans"))
+async def cb_all_answers(callback: CallbackQuery, callback_data: AdminCB, session: AsyncSession) -> None:
+    """Who chose what: one question per page, every employee's choice."""
+    test = await session.get(Test, callback_data.id)
+    if test is None:
+        await callback.answer(t("common.not_found"), show_alert=True)
+        return
+    data = await group_tests.answers_by_question(session, test.id)
+    if not data:
+        await show(callback, t("common.empty"), kb(back_menu_row("tst_v", id_=test.id)))
+        return
+    position = min(max(1, callback_data.p), len(data))
+    item = data[position - 1]
+    tq = item.question
+    lines = [
+        t("tests.answers.header", title=esc(test.title), n=position, total=len(data)),
+        f"<b>{esc(tq.question_text)}</b>",
+        "",
+    ]
+    for i, original in enumerate(item.opts):
+        mark = "✅" if original == tq.correct_option else "▫️"
+        lines.append(f"{mark} <b>{'ABCDE'[i]})</b> {esc(truncate(tq.options[original], 120))}")
+    lines.append("")
+    if not item.answers:
+        lines.append(t("tests.answers.none"))
+    for user, answer in item.answers:
+        # Group tests: everyone saw the same letters. Private tests: options may be shuffled per
+        # employee, so the letter of the shared snapshot order is shown.
+        sel = answer.selected_display if item.group_mode else item.display_of(answer.selected_option)
+        corr = item.display_of(tq.correct_option)
+        lines.append(
+            t("tests.answers.item", mark="✅" if answer.is_correct else "❌", name=esc(user.display_name),
+              sel=sel, corr=corr)
+        )  # fmt: skip
+    nav = [
+        ("◀️", AdminCB(s="tst_ans", id=test.id, p=position - 1)) if position > 1 else (" ", AdminCB(s="noop")),
+        (f"{position}/{len(data)}", AdminCB(s="noop")),
+        ("▶️", AdminCB(s="tst_ans", id=test.id, p=position + 1)) if position < len(data) else (" ", AdminCB(s="noop")),
+    ]
+    await show(callback, "\n".join(lines), kb(nav, back_menu_row("tst_qs", id_=test.id)))
 
 
 @router.callback_query(AdminCB.filter(F.s.in_({"tst_rep", "tst_csv"})))

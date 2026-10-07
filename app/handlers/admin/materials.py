@@ -24,9 +24,9 @@ from app.keyboards.common import back_menu_row, cancel_kb, confirm_kb, kb, pager
 from app.locales import t
 from app.models import FileType, Material, MaterialStatus, User
 from app.rag.vector_store import SourceScope
-from app.services import background
+from app.services import background, settings_service
 from app.services import materials as material_service
-from app.services.ai_runtime import make_generator
+from app.services.ai_runtime import ai_available, make_generator
 from app.services.question_generation import GenerationRequest
 from app.utils.text import esc, sha256_bytes, truncate
 from app.utils.time import fmt_dt
@@ -313,6 +313,14 @@ async def _process_and_report(
         await bot.edit_message_text(text, chat_id=chat_id, message_id=message_id, reply_markup=markup)
     except TelegramBadRequest:
         await bot.send_message(chat_id, text, reply_markup=markup)
+    if not result.ok or not ai_available():
+        return
+    # Automatic step: build source-grounded questions from the new material right away.
+    async with session_maker() as session:
+        count = int(await settings_service.get_value(session, "auto_generate_questions"))
+    if count > 0:
+        status_msg = await bot.send_message(chat_id, t("gen.auto_started", n=count))
+        await _generate_to_bank(session_maker, bot, material_id, count, status_msg.chat.id, status_msg.message_id)
 
 
 async def render_material(target, session: AsyncSession, material_id: int, page: int = 0) -> None:
@@ -343,6 +351,7 @@ async def render_material(target, session: AsyncSession, material_id: int, page:
         lines += ["", t("mat.detail.error", error=doc_error_text(code))]
     rows = []
     if material.status == MaterialStatus.READY and material.is_active:
+        rows.append([(t("mat.btn.quick_test"), AdminCB(s="mat_qt", id=material.id))])
         rows.append([(t("mat.btn.generate"), AdminCB(s="mat_gen", id=material.id))])
         rows.append([(t("mat.btn.questions"), AdminCB(s="qb_mat", id=material.id))])
     if material.status in (MaterialStatus.FAILED, MaterialStatus.READY, MaterialStatus.UPLOADED):
@@ -494,11 +503,14 @@ async def _generate_to_bank(
             text = gen_summary_text(result.created, count, dict(result.rejected), result.error)
         except AIError as exc:
             logger.error("Generation failed", extra={"material_id": material_id, "error": str(exc)[:200]})
-            text = t("gen.failed", error=esc(str(exc)[:200]))
-        except Exception:
+            text = t("gen.failed", error=esc(_friendly_error(str(exc))))
+        except Exception as exc:
             logger.exception("Generation crashed", extra={"material_id": material_id})
-            text = t("gen.failed", error=t("errors.generic"))
-    markup = kb([(t("gen.btn.review"), AdminCB(s="qb_mat", id=material_id, v="pending"))])
+            text = t("gen.failed", error=esc(f"{type(exc).__name__}: {str(exc)[:200]}"))
+    markup = kb(
+        [(t("mat.btn.quick_test"), AdminCB(s="mat_qt", id=material_id))],
+        [(t("gen.btn.review"), AdminCB(s="qb_mat", id=material_id, v="pending"))],
+    )
     try:
         await bot.edit_message_text(text, chat_id=chat_id, message_id=message_id, reply_markup=markup)
     except TelegramBadRequest:
@@ -518,6 +530,101 @@ def gen_summary_text(created: int, requested: int, rejected: dict, error: str | 
 
 
 def _friendly_error(error: str) -> str:
+    """Translate internal/AI error codes into a clear Uzbek explanation for the admin."""
     known = {"no_source_chunks": t("gen.reason.no_source_chunks"), "ai_not_configured": t("ai.not_configured"),
-             "no_sources": t("gen.reason.no_sources"), "not_enough_questions": t("gen.reason.not_enough")}  # fmt: skip
-    return known.get(error, error[:200])
+             "no_sources": t("gen.reason.no_sources"), "not_enough_questions": t("gen.reason.not_enough"),
+             "interrupted_by_restart": t("gen.reason.interrupted")}  # fmt: skip
+    if error in known:
+        return known[error]
+    lowered = error.lower()
+    if "authentication" in lowered:
+        return t("ai.err.auth")
+    if "models unavailable" in lowered or "no usable groq model" in lowered:
+        return t("ai.err.model")
+    if "rate limit" in lowered:
+        return t("ai.err.rate_limit")
+    if "unreachable" in lowered:
+        return t("ai.err.unreachable")
+    if "invalid ai response" in lowered:
+        return t("ai.err.invalid_response")
+    return error[:200]
+
+
+# ------------------------------------------------------------------ ⚡ quick test from one material
+
+
+@router.callback_query(AdminCB.filter(F.s == "mat_qt"))
+async def cb_quick_test(callback: CallbackQuery, callback_data: AdminCB, session: AsyncSession) -> None:
+    material = await session.get(Material, callback_data.id)
+    if material is None or material.status != MaterialStatus.READY:
+        await callback.answer(t("mat.not_ready"), show_alert=True)
+        return
+    mid = material.id
+    await show(
+        callback,
+        t("mat.quick_test_count", title=esc(material.title)),
+        kb(
+            [(str(n), AdminCB(s="mat_qt_n", id=mid, v=str(n))) for n in (10, 15, 20, 30)],
+            back_menu_row("mat_v", id_=mid),
+        ),
+    )
+
+
+@router.callback_query(AdminCB.filter(F.s == "mat_qt_n"))
+async def cb_quick_test_target(callback: CallbackQuery, callback_data: AdminCB, session: AsyncSession) -> None:
+    from app.services import groups as group_service
+
+    groups = await group_service.list_groups(session, active_only=True)
+    n = callback_data.v
+    rows = [
+        [
+            (
+                t("wiz.in_group", g=truncate(g.title, 36), n=members),
+                AdminCB(s="mat_qt_go", id=callback_data.id, v=f"{n}:{g.id}"),
+            )
+        ]
+        for g, members in groups
+    ]
+    rows.append([(t("wiz.private_mode"), AdminCB(s="mat_qt_go", id=callback_data.id, v=f"{n}:0"))])
+    rows.append(back_menu_row("mat_qt", id_=callback_data.id))
+    await show(callback, t("mat.quick_test_where"), kb(*rows))
+
+
+@router.callback_query(AdminCB.filter(F.s == "mat_qt_go"))
+async def cb_quick_test_create(
+    callback: CallbackQuery, callback_data: AdminCB, session: AsyncSession, session_maker, bot: Bot, user: User
+) -> None:
+    from datetime import timedelta
+
+    from app.handlers.admin.tests import start_assembly
+    from app.models import AnswerReveal, DeliveryMode, TestDifficulty
+    from app.services.test_builder import TestDraftData, create_test
+    from app.utils.time import utcnow
+
+    material = await session.get(Material, callback_data.id)
+    count_s, _, group_s = callback_data.v.partition(":")
+    if material is None or not count_s.isdigit():
+        await callback.answer(t("common.not_found"), show_alert=True)
+        return
+    group_id = int(group_s) if group_s.isdigit() and int(group_s) else None
+    now = utcnow()
+    test = await create_test(
+        session,
+        TestDraftData(
+            title=material.title[:200],
+            question_count=int(count_s),
+            starts_at=now,
+            deadline_at=now + timedelta(hours=24),
+            difficulty=TestDifficulty.MIXED,
+            material_ids=[material.id],
+            randomize_questions=True,
+            randomize_options=True,
+            answer_reveal=AnswerReveal.AFTER_COMPLETION.value,
+            passing_percent=60,
+            group_id=group_id,
+            delivery_mode=DeliveryMode.GROUP if group_id else DeliveryMode.PRIVATE,
+        ),
+        user.id,
+    )
+    await callback.answer(t("wiz.created"))
+    await start_assembly(callback, session_maker, bot, test.id)

@@ -30,7 +30,7 @@ from app.middlewares import DbSessionMiddleware, UserMiddleware
 from app.rag.embeddings import FastEmbedProvider, get_embedding_provider
 from app.rag.vector_store import detect_backend
 from app.services import background
-from app.services.scheduler import scheduler_loop
+from app.services.scheduler import group_refresh_loop, scheduler_loop
 from app.services.test_builder import reset_stuck_generation
 from app.services.users import sync_admin_roles
 from app.utils.logging import setup_logging
@@ -147,6 +147,7 @@ async def run() -> None:
             pass
 
     scheduler_task = asyncio.create_task(scheduler_loop(bot, get_session_maker(), stop), name="scheduler")
+    refresh_task = asyncio.create_task(group_refresh_loop(bot, get_session_maker(), stop), name="group-refresh")
     allowed = dp.resolve_used_update_types()
     if "chat_member" not in allowed:
         allowed.append("chat_member")
@@ -181,7 +182,7 @@ async def run() -> None:
     finally:
         logger.info("Shutting down")
         stop.set()
-        await asyncio.gather(scheduler_task, return_exceptions=True)
+        await asyncio.gather(scheduler_task, refresh_task, return_exceptions=True)
         await background.shutdown()
         await runner.cleanup()
         await bot.session.close()

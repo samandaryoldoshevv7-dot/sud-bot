@@ -81,7 +81,7 @@ async def engine(database_url):
 
 
 TABLES = [
-    "user_answers", "test_attempts", "test_questions", "test_materials", "tests", "questions", "topics",
+    "user_answers", "group_question_messages", "group_test_posts", "question_options", "test_attempts", "test_questions", "test_materials", "tests", "questions", "topics",
     "source_chunks", "news", "materials", "group_members", "groups", "users", "bot_settings",
 ]  # fmt: skip
 

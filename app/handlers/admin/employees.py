@@ -239,8 +239,9 @@ async def cb_wrong(callback: CallbackQuery, callback_data: AdminCB, session: Asy
                 test=esc(truncate(r.test_title, 60)),
                 n=r.answer.position + 1,
                 question=esc(truncate(q.question_text, 400)),
-                selected=f"{r.answer.selected_option}) {esc(truncate(q.options.get(r.answer.selected_option, ''), 150))}",
-                correct=f"{q.correct_option}) {esc(truncate(q.options.get(q.correct_option, ''), 150))}",
+                selected=f"{r.answer.selected_display}) {esc(truncate(q.options.get(r.answer.selected_option, ''), 150))}",
+                correct=f"{r.answer.correct_display or q.correct_option}) "
+                f"{esc(truncate(q.options.get(q.correct_option, ''), 150))}",
                 topic=esc(q.topic_name or "—"),
                 source=esc(truncate(q.source_reference, 150)),
                 explanation=esc(truncate(q.explanation, 300)),

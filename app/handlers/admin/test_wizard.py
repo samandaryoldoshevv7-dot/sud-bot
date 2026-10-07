@@ -15,7 +15,7 @@ from app.handlers.admin.common import show
 from app.keyboards.callbacks import AdminCB, WizCB
 from app.keyboards.common import Button, kb
 from app.locales import t
-from app.models import TestDifficulty, User
+from app.models import DeliveryMode, TestDifficulty, User
 from app.services import groups as group_service
 from app.services import materials as material_service
 from app.services.ai_runtime import ai_available
@@ -41,7 +41,6 @@ STEPS = [
     "rand_q",
     "rand_o",
     "reveal",
-    "retakes",
     "passing",
     "confirm",
 ]
@@ -122,8 +121,8 @@ async def _prompt(target, state: FSMContext, session: AsyncSession, step: str) -
         await show(target, header + t("wiz.focus"), kb(_nav(step, skip=True)))
     elif step == "audience":
         groups = await group_service.list_groups(session, active_only=True)
-        rows = [[(t("wiz.all_employees"), WizCB(f=step, v="0"))]]
-        rows += [[(f"👥 {truncate(g.title, 40)} ({n})", WizCB(f=step, v=str(g.id)))] for g, n in groups]
+        rows = [[(t("wiz.in_group", g=truncate(g.title, 36), n=n), WizCB(f=step, v=str(g.id)))] for g, n in groups]
+        rows.append([(t("wiz.private_mode"), WizCB(f=step, v="0"))])
         await show(target, header + t("wiz.audience"), kb(*rows, _nav(step)))
     elif step == "start":
         await show(target, header + t("wiz.start"), kb([(t("wiz.now"), WizCB(f=step, v="now"))], _nav(step)))
@@ -137,7 +136,7 @@ async def _prompt(target, state: FSMContext, session: AsyncSession, step: str) -
                 _nav(step),
             ),
         )
-    elif step in ("rand_q", "rand_o", "retakes"):
+    elif step in ("rand_q", "rand_o"):
         await show(target, header + t(f"wiz.{step}"), _yes_no(step))
     elif step == "reveal":
         await show(
@@ -175,10 +174,10 @@ async def _summary(session: AsyncSession, wiz: dict) -> str:
             m.title for m in await material_service.ready_materials(session) if m.id in set(wiz.get("material_ids", []))
         ]
         sources = ", ".join(esc(truncate(x, 40)) for x in titles) or "—"
-    audience = t("wiz.all_employees")
+    audience = t("wiz.private_mode")
     if wiz.get("group_id"):
         groups = {g.id: g.title for g, _ in await group_service.list_groups(session)}
-        audience = esc(groups.get(wiz["group_id"], "—"))
+        audience = t("wiz.in_group_summary", g=esc(groups.get(wiz["group_id"], "—")))
     yn = {True: t("common.yes"), False: t("common.no")}
     return t(
         "wiz.summary",
@@ -197,7 +196,6 @@ async def _summary(session: AsyncSession, wiz: dict) -> str:
         rand_q=yn[bool(wiz.get("rand_q"))],
         rand_o=yn[bool(wiz.get("rand_o"))],
         reveal=t(f"reveal.{wiz['reveal']}"),
-        retakes=yn[bool(wiz.get("retakes"))],
         passing=wiz["passing"],
     )
 
@@ -369,7 +367,7 @@ async def cb_choice(
         await _set(state, start_local=None)
     elif step == "duration":
         await _set(state, duration_hours=float(value))
-    elif step in ("rand_q", "rand_o", "retakes"):
+    elif step in ("rand_q", "rand_o"):
         await _set(state, **{step: value == "1"})
     elif step == "reveal":
         await _set(state, reveal=value)
@@ -408,7 +406,8 @@ async def _create(
         randomize_questions=bool(wiz.get("rand_q")),
         randomize_options=bool(wiz.get("rand_o")),
         answer_reveal=wiz.get("reveal", "after"),
-        allow_retakes=bool(wiz.get("retakes")),
+        allow_retakes=False,  # one answer per (user, test, question) is final
+        delivery_mode=DeliveryMode.GROUP if wiz.get("group_id") else DeliveryMode.PRIVATE,
         passing_percent=int(wiz.get("passing", 60)),
     )
     try:

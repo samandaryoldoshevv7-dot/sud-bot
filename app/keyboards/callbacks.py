@@ -35,3 +35,19 @@ class WizCB(CallbackData, prefix="w"):
 
     f: str
     v: str = ""
+
+
+class GroupStartCB(CallbackData, prefix="gs"):
+    """▶️ TESTNI BOSHLASH under a group test header (``p`` = group post id)."""
+
+    p: int
+
+
+class GroupAnsCB(CallbackData, prefix="ga"):
+    """Answer click on a shared group question message (``m`` = message row id, ``o`` = letter).
+
+    The answering user is taken from ``callback.from_user`` — never from callback data.
+    """
+
+    m: int
+    o: str

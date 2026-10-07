@@ -24,6 +24,19 @@ async def groq_server(unused_tcp_port_factory=None):
         state["bodies"].append(body)
         if state["mode"] == "auth":
             return web.json_response({"error": {"message": "Invalid API Key"}}, status=401)
+        if state["mode"] in ("retired", "all_retired") and (
+            body["model"] == "openai/gpt-oss-120b" or state["mode"] == "all_retired"
+        ):
+            return web.json_response(
+                {
+                    "error": {
+                        "message": f"The model `{body['model']}` has been decommissioned and is no longer supported.",
+                        "type": "invalid_request_error",
+                        "code": "model_decommissioned",
+                    }
+                },
+                status=400,
+            )
         if state["mode"] == "ratelimit" and state["calls"] == 1:
             return web.json_response({"error": {"message": "Rate limit"}}, status=429, headers={"retry-after": "0"})
         content = json.dumps({"supported": True, "explanation": "Manbaga ko'ra shunday."})
@@ -63,7 +76,7 @@ async def test_json_mode_request_and_parsing(groq_server):
     result = await structured_call(_provider(url), "Return JSON", "source", ExplanationResponse)
     assert result.supported and "Manbaga" in result.explanation
     assert state["bodies"][0]["response_format"] == {"type": "json_object"}
-    assert state["bodies"][0]["model"] == "llama-3.3-70b-versatile"
+    assert state["bodies"][0]["model"] == "openai/gpt-oss-120b"
 
 
 async def test_rate_limit_is_retried(groq_server, monkeypatch):
@@ -78,4 +91,25 @@ async def test_auth_error_is_reported(groq_server):
     state, url = groq_server
     state["mode"] = "auth"
     with pytest.raises(AIProviderError, match="authentication"):
+        await structured_call(_provider(url, max_retries=0), "Return JSON", "source", ExplanationResponse)
+
+
+async def test_retired_model_falls_back_and_is_remembered(groq_server):
+    state, url = groq_server
+    state["mode"] = "retired"
+    provider = _provider(url, max_retries=0)
+    result = await structured_call(provider, "Return JSON", "source", ExplanationResponse)
+    assert result.supported
+    models = [b["model"] for b in state["bodies"]]
+    assert models == ["openai/gpt-oss-120b", "openai/gpt-oss-20b"]
+    assert provider.default_model == "openai/gpt-oss-20b"
+    await structured_call(provider, "Return JSON", "source", ExplanationResponse)
+    assert state["bodies"][-1]["model"] == "openai/gpt-oss-20b"  # no second attempt at the retired model
+    assert state["bodies"][-1].get("reasoning_effort") == "low"
+
+
+async def test_all_models_retired_gives_clear_error(groq_server):
+    state, url = groq_server
+    state["mode"] = "all_retired"
+    with pytest.raises(AIProviderError, match="unavailable"):
         await structured_call(_provider(url, max_retries=0), "Return JSON", "source", ExplanationResponse)

@@ -24,6 +24,7 @@ from app.database.base import Base, TimestampMixin, str_enum
 from app.models.enums import (
     AnswerReveal,
     AttemptStatus,
+    DeliveryMode,
     Difficulty,
     GenerationStatus,
     SourceKind,
@@ -55,6 +56,9 @@ class Test(TimestampMixin, Base):
     use_all_materials: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     focus_query: Mapped[str | None] = mapped_column(String(500))
     group_id: Mapped[int | None] = mapped_column(ForeignKey("groups.id", ondelete="SET NULL"))
+    delivery_mode: Mapped[DeliveryMode] = mapped_column(
+        str_enum(DeliveryMode, "delivery_mode"), default=DeliveryMode.PRIVATE, server_default="private", nullable=False
+    )
     starts_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     deadline_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
     randomize_questions: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
@@ -136,6 +140,22 @@ class TestQuestion(Base):
     is_approved: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
     test: Mapped[Test] = relationship(back_populates="questions")
+    option_rows: Mapped[list[QuestionOption]] = relationship(
+        cascade="all, delete-orphan", passive_deletes=True, order_by="QuestionOption.letter"
+    )
+
+
+class QuestionOption(Base):
+    """One answer option of a test-question snapshot (immutable once the test is published)."""
+
+    __tablename__ = "question_options"
+    __table_args__ = (UniqueConstraint("test_question_id", "letter"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    test_question_id: Mapped[int] = mapped_column(ForeignKey("test_questions.id", ondelete="CASCADE"), nullable=False)
+    letter: Mapped[str] = mapped_column(String(1), nullable=False)  # snapshot (original) letter
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    is_correct: Mapped[bool] = mapped_column(Boolean, nullable=False)
 
 
 class TestAttempt(TimestampMixin, Base):
@@ -192,22 +212,71 @@ class TestAttempt(TimestampMixin, Base):
 
 
 class UserAnswer(Base):
+    """An employee's answer. Exactly ONE answer per (user, test, question) — enforced by a unique
+    constraint — and rows are immutable (a database trigger rejects every UPDATE)."""
+
     __tablename__ = "user_answers"
     __table_args__ = (
+        UniqueConstraint("user_id", "test_id", "test_question_id", name="uq_user_answers_user_test_question"),
         UniqueConstraint("attempt_id", "test_question_id"),
         Index("ix_user_answers_user_correct", "user_id", "is_correct"),
+        Index("ix_user_answers_test_question", "test_id", "test_question_id"),
         CheckConstraint("selected_option IN ('A','B','C','D','E')", name="selected_option_letter"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     attempt_id: Mapped[int] = mapped_column(ForeignKey("test_attempts.id", ondelete="CASCADE"), nullable=False)
+    test_id: Mapped[int] = mapped_column(ForeignKey("tests.id", ondelete="CASCADE"), nullable=False)
     test_question_id: Mapped[int] = mapped_column(
         ForeignKey("test_questions.id", ondelete="CASCADE"), nullable=False, index=True
     )
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    telegram_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     position: Mapped[int] = mapped_column(Integer, nullable=False)
-    selected_option: Mapped[str] = mapped_column(String(1), nullable=False)  # original letter
+    selected_option: Mapped[str] = mapped_column(String(1), nullable=False)  # original (snapshot) letter
+    selected_option_id: Mapped[int | None] = mapped_column(ForeignKey("question_options.id", ondelete="SET NULL"))
     selected_display: Mapped[str] = mapped_column(String(1), nullable=False)  # letter the employee saw
     correct_option: Mapped[str] = mapped_column(String(1), nullable=False)  # original letter (snapshot)
+    correct_display: Mapped[str | None] = mapped_column(String(1))  # correct letter as the employee saw it
     is_correct: Mapped[bool] = mapped_column(Boolean, nullable=False)
     answered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class GroupTestPost(TimestampMixin, Base):
+    """A test running inside a Telegram group (header message + one message per question)."""
+
+    __tablename__ = "group_test_posts"
+    __table_args__ = (UniqueConstraint("test_id", "group_id"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    test_id: Mapped[int] = mapped_column(ForeignKey("tests.id", ondelete="CASCADE"), nullable=False)
+    group_id: Mapped[int] = mapped_column(ForeignKey("groups.id", ondelete="CASCADE"), nullable=False)
+    chat_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    header_message_id: Mapped[int | None] = mapped_column(Integer)
+    posted_all: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    finalized_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    messages: Mapped[list[GroupQuestionMessage]] = relationship(
+        back_populates="post",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        order_by="GroupQuestionMessage.position",
+    )
+
+
+class GroupQuestionMessage(Base):
+    """One shared question message in the group. ``opts[i]`` = snapshot letter shown as A, B, C..."""
+
+    __tablename__ = "group_question_messages"
+    __table_args__ = (UniqueConstraint("post_id", "test_question_id"), UniqueConstraint("post_id", "position"))
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    post_id: Mapped[int] = mapped_column(ForeignKey("group_test_posts.id", ondelete="CASCADE"), nullable=False)
+    test_question_id: Mapped[int] = mapped_column(ForeignKey("test_questions.id", ondelete="CASCADE"), nullable=False)
+    position: Mapped[int] = mapped_column(Integer, nullable=False)  # 0-based
+    opts: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    message_id: Mapped[int | None] = mapped_column(Integer)
+    rendered_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    rendered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    post: Mapped[GroupTestPost] = relationship(back_populates="messages")

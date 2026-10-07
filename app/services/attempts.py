@@ -21,8 +21,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import (
     AttemptStatus,
+    DeliveryMode,
     Group,
     GroupMember,
+    QuestionOption,
     Test,
     TestAttempt,
     TestQuestion,
@@ -46,6 +48,7 @@ class StartError(str, Enum):
     NOT_IN_GROUP = "not_in_group"
     ALREADY_COMPLETED = "already_completed"
     NO_QUESTIONS = "no_questions"
+    GROUP_ONLY = "group_only"
 
 
 @dataclass
@@ -141,6 +144,8 @@ async def start_attempt(
     chat_id: int | None = None,
     now: datetime | None = None,
     rng: random.Random | None = None,
+    layout: list[dict] | None = None,
+    from_group: bool = False,
 ) -> StartResult:
     now = now or utcnow()
     rng = rng or random.SystemRandom()
@@ -167,6 +172,8 @@ async def start_attempt(
         return StartResult(error=StartError.NOT_ACTIVE)
     if now < test.starts_at:
         return StartResult(error=StartError.NOT_STARTED_YET)
+    if test.delivery_mode == DeliveryMode.GROUP and not from_group:
+        return StartResult(error=StartError.GROUP_ONLY)
     if not await user_in_test_audience(session, test, user):
         return StartResult(error=StartError.NOT_IN_GROUP)
 
@@ -177,10 +184,9 @@ async def start_attempt(
             )
         )
     ).all()
-    if not test.allow_retakes:
-        # Admin-cancelled attempts do not count; any completed/expired attempt blocks a retake.
-        if any(st in (AttemptStatus.COMPLETED, AttemptStatus.EXPIRED) for st, _ in previous):
-            return StartResult(error=StartError.ALREADY_COMPLETED)
+    # One answer per (user, test, question) is final, so a finished attempt can never be retaken.
+    if any(st != AttemptStatus.IN_PROGRESS for st, _ in previous):
+        return StartResult(error=StartError.ALREADY_COMPLETED)
     attempt_no = max((n for _, n in previous), default=0) + 1
 
     questions = list(
@@ -203,7 +209,7 @@ async def start_attempt(
         started_at=now,
         deadline_at=test.deadline_at,
         total_questions=len(questions),
-        layout=build_layout(questions, test.randomize_questions, test.randomize_options, rng),
+        layout=layout or build_layout(questions, test.randomize_questions, test.randomize_options, rng),
         chat_id=chat_id,
     )
     session.add(attempt)
@@ -241,6 +247,7 @@ async def submit_answer(
 ) -> AnswerResult:
     now = now or utcnow()
     user_id = user.id
+    telegram_id = user.telegram_id
     # Row lock serialises concurrent clicks on the same attempt.
     attempt = (
         await session.execute(select(TestAttempt).where(TestAttempt.id == attempt_id).with_for_update(of=TestAttempt))
@@ -267,15 +274,24 @@ async def submit_answer(
         return AnswerResult(AnswerOutcome.INVALID, attempt=attempt)
 
     is_correct = original == tq.correct_option
+    option_id = (
+        await session.execute(
+            select(QuestionOption.id).where(QuestionOption.test_question_id == tq.id, QuestionOption.letter == original)
+        )
+    ).scalar_one_or_none()
     session.add(
         UserAnswer(
             attempt_id=attempt.id,
+            test_id=attempt.test_id,
             test_question_id=tq.id,
             user_id=user_id,
+            telegram_id=telegram_id,
             position=position,
             selected_option=original,
+            selected_option_id=option_id,
             selected_display=display_letter,
             correct_option=tq.correct_option,
+            correct_display=original_to_display(item, tq.correct_option),
             is_correct=is_correct,
             answered_at=now,
         )
@@ -348,21 +364,6 @@ async def expire_attempts(session: AsyncSession, test_id: int | None = None, now
     return len(attempts)
 
 
-async def cancel_attempt(session: AsyncSession, attempt_id: int, reason: str) -> TestAttempt | None:
-    """Admin reset: the attempt is kept for audit as CANCELLED and does not block a new attempt."""
-    attempt = (
-        await session.execute(select(TestAttempt).where(TestAttempt.id == attempt_id).with_for_update(of=TestAttempt))
-    ).scalar_one_or_none()
-    if attempt is None or attempt.status == AttemptStatus.CANCELLED:
-        await session.commit()  # releases the row lock without expiring loaded objects
-        return attempt
-    attempt.status = AttemptStatus.CANCELLED
-    attempt.cancelled_reason = reason[:255]
-    await session.commit()
-    logger.info("Attempt cancelled by admin", extra={"attempt_id": attempt_id})
-    return attempt
-
-
 async def set_message_ref(session: AsyncSession, attempt_id: int, chat_id: int, message_id: int) -> None:
     await session.execute(
         update(TestAttempt).where(TestAttempt.id == attempt_id).values(chat_id=chat_id, last_message_id=message_id)
@@ -377,6 +378,16 @@ async def wrong_answers_for_attempt(
         select(UserAnswer, TestQuestion)
         .join(TestQuestion, TestQuestion.id == UserAnswer.test_question_id)
         .where(UserAnswer.attempt_id == attempt.id, UserAnswer.is_correct.is_(False))
+        .order_by(UserAnswer.position)
+    )
+    return [(a, q) for a, q in await session.execute(stmt)]
+
+
+async def answers_for_attempt(session: AsyncSession, attempt: TestAttempt) -> list[tuple[UserAnswer, TestQuestion]]:
+    stmt = (
+        select(UserAnswer, TestQuestion)
+        .join(TestQuestion, TestQuestion.id == UserAnswer.test_question_id)
+        .where(UserAnswer.attempt_id == attempt.id)
         .order_by(UserAnswer.position)
     )
     return [(a, q) for a, q in await session.execute(stmt)]

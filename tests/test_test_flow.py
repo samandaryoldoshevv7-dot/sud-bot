@@ -220,7 +220,7 @@ async def test_other_user_cannot_answer_foreign_attempt(session_maker, session):
 
 
 async def test_deadline_expiration_and_participation(session_maker, session):
-    test = await _ready_active_test(session_maker, session, n_questions=2, allow_retakes=False)
+    test = await _ready_active_test(session_maker, session, n_questions=2)
     done = await make_employee(session, 70, "Bajardi Birinchi")
     started = await make_employee(session, 71, "Boshladi Ikkinchi")
     await make_employee(session, 72, "Qatnashmadi Uchinchi")
@@ -275,7 +275,7 @@ async def test_answer_after_deadline_expires_attempt(session_maker, session):
     assert attempt.status == AttemptStatus.EXPIRED and attempt.answered_count == 0
 
 
-async def test_admin_cancel_allows_retake(session_maker, session):
+async def test_finished_attempt_cannot_be_retaken(session_maker, session):
     test = await _ready_active_test(session_maker, session, n_questions=2)
     emp = await make_employee(session, 81)
     attempt = (await attempt_service.start_attempt(session, emp, test.id)).attempt
@@ -283,9 +283,6 @@ async def test_admin_cancel_allows_retake(session_maker, session):
         await session.refresh(attempt)
         await attempt_service.submit_answer(session, emp, attempt.id, pos, "B")
     assert (await attempt_service.start_attempt(session, emp, test.id)).error == StartError.ALREADY_COMPLETED
-    await attempt_service.cancel_attempt(session, attempt.id, "reset")
-    second = await attempt_service.start_attempt(session, emp, test.id)
-    assert second.error is None and second.attempt.attempt_no == 2
 
 
 async def test_snapshot_is_immutable_after_bank_edit(session_maker, session):

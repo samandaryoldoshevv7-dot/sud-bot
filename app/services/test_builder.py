@@ -8,16 +8,18 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from sqlalchemy import delete, func, select, text, update
+from sqlalchemy import case, delete, func, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.ai.base import AIError
 from app.models import (
     AttemptStatus,
+    DeliveryMode,
     GenerationStatus,
     Material,
     MaterialStatus,
     Question,
+    QuestionOption,
     QuestionStatus,
     SourceKind,
     Test,
@@ -69,6 +71,7 @@ class TestDraftData:
     answer_reveal: str = "after"
     allow_retakes: bool = False
     passing_percent: int = 60
+    delivery_mode: DeliveryMode = DeliveryMode.PRIVATE
 
 
 async def create_test(session: AsyncSession, data: TestDraftData, created_by_id: int | None) -> Test:
@@ -91,8 +94,9 @@ async def create_test(session: AsyncSession, data: TestDraftData, created_by_id:
         randomize_questions=data.randomize_questions,
         randomize_options=data.randomize_options,
         answer_reveal=AnswerReveal(data.answer_reveal),
-        allow_retakes=data.allow_retakes,
+        allow_retakes=False,
         passing_percent=data.passing_percent,
+        delivery_mode=data.delivery_mode,
         status=TestStatus.DRAFT,
         created_by_id=created_by_id,
     )
@@ -142,6 +146,9 @@ def snapshot_question(
         source_reference=question.source_reference,
         source_excerpt=question.source_excerpt,
         is_approved=question.status == QuestionStatus.APPROVED,
+        option_rows=[
+            QuestionOption(letter=letter, text=text_, is_correct=letter == correct) for letter, text_ in options.items()
+        ],
     )
 
 
@@ -208,7 +215,9 @@ async def select_bank_questions(
     if count <= 0 or not source_ids:
         return []
     stmt = select(Question).where(
-        Question.status == QuestionStatus.APPROVED,
+        # Pending questions already passed automatic source verification; they are shown to the
+        # admin for approval in the test review before the test can be started.
+        Question.status.in_([QuestionStatus.APPROVED, QuestionStatus.PENDING]),
         Question.source_kind == kind,
         Question.option_count >= test.option_count,
     )
@@ -220,7 +229,8 @@ async def select_bank_questions(
         stmt = stmt.where(Question.difficulty == test.difficulty.value)
     if exclude_ids:
         stmt = stmt.where(Question.id.not_in(exclude_ids))
-    stmt = stmt.order_by(Question.times_used, func.random()).limit(max(count * 5, 40))
+    approved_first = case((Question.status == QuestionStatus.APPROVED, 0), else_=1)
+    stmt = stmt.order_by(approved_first, Question.times_used, func.random()).limit(max(count * 5, 40))
     candidates = list((await session.execute(stmt)).unique().scalars().all())
     recent = await _recently_used_question_ids(session, test.id)
     fresh = [q for q in candidates if q.id not in recent]
@@ -555,8 +565,12 @@ async def publish(session: AsyncSession, test_id: int, now: datetime | None = No
         raise TestStateError("not_ready")
     if test.published_at is not None:
         return test  # idempotent
-    if test.deadline_at <= now:
-        raise TestStateError("deadline_passed")
+    if test.starts_at < now:
+        # "Start now" tests: the time window starts at publication, keeping its full duration
+        # (review may have taken a while after the draft was created).
+        duration = test.deadline_at - test.starts_at
+        test.starts_at = now
+        test.deadline_at = now + duration
     test.published_at = now
     if test.starts_at <= now:
         test.status = TestStatus.ACTIVE
