@@ -1,0 +1,24 @@
+[project]
+name = "court-training-bot"
+version = "1.0.0"
+description = "Telegram bot for training and testing court employees (RAG + Groq)"
+requires-python = ">=3.12"
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+extend-exclude = ["migrations/versions"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "ASYNC", "RUF"]
+ignore = ["UP042", "UP047", "RUF005", "ASYNC109", "SIM102", "SIM103", "E501", "B008", "RUF001", "RUF002", "RUF003", "SIM105", "B904", "RUF012", "ASYNC230", "ASYNC240"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["app"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "session"
+asyncio_default_test_loop_scope = "session"
+filterwarnings = ["ignore::DeprecationWarning:aiogram.*"]
