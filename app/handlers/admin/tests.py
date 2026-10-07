@@ -154,6 +154,8 @@ async def render_test(target, session: AsyncSession, test_id: int) -> None:
             rows.append([(t("tests.btn.preview", n=total), AdminCB(s="tst_rv", id=test.id, p=1))])
         if total < test.question_count and test.generation_status != GenerationStatus.RUNNING:
             rows.append([(t("tests.btn.fill", n=test.question_count - total), AdminCB(s="tst_gen", id=test.id))])
+            if total:
+                rows.append([(t("tests.btn.shrink", n=total), AdminCB(s="tst_shrink", id=test.id))])
         if total and approved < total:
             rows.append([(t("tests.btn.approve_all"), AdminCB(s="tst_apall", id=test.id))])
         if total == test.question_count and approved == total:
@@ -267,10 +269,13 @@ async def _assemble_and_report(
             text += "\n" + t("gen.error_note", error=esc(_friendly_error(report.error)))
         if report.rejected:
             text += "\n" + t("tests.assembly_rejected", n=sum(report.rejected.values()))
-    markup = kb(
+    rows = [
         [(t("tests.btn.open"), AdminCB(s="tst_v", id=test_id))],
         [(t("tests.btn.preview_short"), AdminCB(s="tst_rv", id=test_id, p=1))],
-    )
+    ]
+    if report.missing and report.error != "busy_or_not_draft":
+        rows.insert(0, [(t("tests.btn.shrink_short"), AdminCB(s="tst_shrink", id=test_id))])
+    markup = kb(*rows)
     try:
         await bot.edit_message_text(text, chat_id=chat_id, message_id=message_id, reply_markup=markup)
     except TelegramBadRequest:
@@ -403,6 +408,17 @@ async def cb_approve_all(callback: CallbackQuery, callback_data: AdminCB, sessio
 
 
 # ------------------------------------------------------------------------------ lifecycle
+
+
+@router.callback_query(AdminCB.filter(F.s == "tst_shrink"))
+async def cb_shrink(callback: CallbackQuery, callback_data: AdminCB, session: AsyncSession) -> None:
+    try:
+        test = await tb.shrink_to_available(session, callback_data.id)
+    except TestStateError as exc:
+        await callback.answer(t(f"test_error.{exc.code}"), show_alert=True)
+        return
+    await callback.answer(t("tests.shrunk", n=test.question_count))
+    await render_test(callback, session, test.id)
 
 
 @router.callback_query(AdminCB.filter(F.s == "tst_ready"))

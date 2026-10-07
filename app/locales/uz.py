@@ -463,6 +463,9 @@ TEXTS: dict[str, str] = {
     "tests.btn.preview_short": "👀 Savollarni ko'rish",
     "tests.btn.fill": "🧠 Savollarni yig'ish/yaratish (+{n})",
     "tests.btn.approve_all": "✅ Hammasini tasdiqlash",
+    "tests.btn.shrink": "✂️ Mavjud {n} ta savol bilan davom etish",
+    "tests.btn.shrink_short": "✂️ Mavjud savollar bilan davom etish",
+    "tests.shrunk": "✂️ Test {n} ta savol bilan davom etadi",
     "tests.btn.approve": "✅ Tasdiqlash",
     "tests.btn.reject": "❌ Rad etish",
     "tests.btn.regenerate": "🔄 Qayta yaratish",
@@ -512,7 +515,8 @@ TEXTS: dict[str, str] = {
         "🗂 Bankdan: {bank}\n🧠 Yangi yaratildi: {generated}\n"
         "📚 Materiallardan: {material} | 📰 Yangiliklardan: {news}\n"
         "⚠️ Yetishmayapti: {missing}\n\n"
-        "Endi savollarni ko'rib chiqing va tasdiqlang."
+        "Endi savollarni ko'rib chiqing va tasdiqlang. Savol yetishmasa: yana material yuklang va "
+        "«🧠 Savollarni yig'ish» ni bosing yoki «✂️ Mavjud savollar bilan davom etish» ni tanlang."
     ),
     "tests.assembly_rejected": "🚫 Sifat nazoratidan o'tmagan AI nomzodlari: {n}",
     "tests.review.empty": "Testda hali savollar yo'q.",

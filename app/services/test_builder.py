@@ -225,12 +225,15 @@ async def select_bank_questions(
         stmt = stmt.where(Question.source_material_id.in_(source_ids))
     else:
         stmt = stmt.where(Question.source_news_id.in_(source_ids))
-    if test.difficulty != TestDifficulty.MIXED:
-        stmt = stmt.where(Question.difficulty == test.difficulty.value)
     if exclude_ids:
         stmt = stmt.where(Question.id.not_in(exclude_ids))
     approved_first = case((Question.status == QuestionStatus.APPROVED, 0), else_=1)
-    stmt = stmt.order_by(approved_first, Question.times_used, func.random()).limit(max(count * 5, 40))
+    order = [approved_first, Question.times_used, func.random()]
+    if test.difficulty != TestDifficulty.MIXED:
+        # Requested difficulty first; other levels only fill a shortfall instead of leaving the
+        # test incomplete while suitable source-grounded questions sit in the bank.
+        order.insert(0, case((Question.difficulty == test.difficulty.value, 0), else_=1))
+    stmt = stmt.order_by(*order).limit(max(count * 5, 40))
     candidates = list((await session.execute(stmt)).unique().scalars().all())
     recent = await _recently_used_question_ids(session, test.id)
     fresh = [q for q in candidates if q.id not in recent]
@@ -238,6 +241,8 @@ async def select_bank_questions(
     pool = fresh + stale  # repeats from recent tests only when nothing else is available
 
     if test.difficulty != TestDifficulty.MIXED:
+        wanted = test.difficulty.value
+        pool.sort(key=lambda q: q.difficulty.value != wanted)  # stable: keeps freshness order
         return pool[:count]
     by_diff: dict[str, list[Question]] = {}
     for q in pool:
@@ -528,6 +533,22 @@ async def reject_test_question(session: AsyncSession, tq_id: int, reviewer_id: i
     await renumber_positions(session, test_id)
     await session.commit()
     return test_id
+
+
+async def shrink_to_available(session: AsyncSession, test_id: int) -> Test:
+    """Admin choice when sources cannot provide more questions: use the questions already in the test."""
+    test = await _require_draft(session, test_id)
+    if test.generation_status == GenerationStatus.RUNNING:
+        raise TestStateError("generation_running")
+    total, _ = await question_counts(session, test_id)
+    if total < 1:
+        raise TestStateError("question_count_mismatch")
+    test.question_count = total
+    test.generation_status = GenerationStatus.DONE
+    test.generation_error = None
+    await session.commit()
+    logger.info("Test reduced to available questions", extra={"test_id": test_id, "questions": total})
+    return test
 
 
 async def mark_ready(session: AsyncSession, test_id: int) -> Test:
