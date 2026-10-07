@@ -1,0 +1,35 @@
+# Local development: PostgreSQL with pgvector (+ optionally the bot itself).
+#   docker compose up -d db            # database only (run the bot from your virtualenv)
+#   docker compose up --build          # database + bot in containers (uses .env)
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: court
+      POSTGRES_PASSWORD: court_dev_password
+      POSTGRES_DB: court_bot
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U court -d court_bot"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  bot:
+    build: .
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://court:court_dev_password@db:5432/court_bot
+    ports:
+      - "8080:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+    profiles: ["bot"]
+
+volumes:
+  pgdata:
