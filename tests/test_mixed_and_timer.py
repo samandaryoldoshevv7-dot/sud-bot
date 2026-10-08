@@ -605,3 +605,34 @@ async def test_rate_limit_stops_build_quickly_and_resume_reuses_questions(tg, se
     sent = tg.session.sent_to(ADMIN)
     assert sent and "to'xtadi" in sent[0].text
     assert sent[0].reply_markup.inline_keyboard[0][0].text == "🔄 Davom ettirish"
+
+
+def test_log_calls_never_crash_on_reserved_extra_keys():
+    """Was: test building failed with "Attempt to overwrite 'created' in LogRecord"."""
+    import logging
+    import pathlib
+
+    from app.services import mixed_tests
+
+    records = []
+
+    class Keep(logging.Handler):
+        def emit(self, record):
+            records.append(record)
+
+    handler, old_level, old_disabled = Keep(), mixed_tests.logger.level, mixed_tests.logger.disabled
+    mixed_tests.logger.addHandler(handler)
+    mixed_tests.logger.setLevel(logging.INFO)
+    mixed_tests.logger.disabled = False  # alembic's fileConfig (test DB setup) disables existing loggers
+    try:
+        mixed_tests.logger.info("x", extra={"created": 1, "message": "m", "name": "n"})
+    finally:
+        mixed_tests.logger.removeHandler(handler)
+        mixed_tests.logger.setLevel(old_level)
+        mixed_tests.logger.disabled = old_disabled
+    assert records and records[-1].created_ == 1
+    reserved = set(logging.LogRecord("", 0, "", 0, "", None, None).__dict__)
+    for path in pathlib.Path("app").rglob("*.py"):
+        for match in re.finditer(r"extra=\{([^}]*)\}", path.read_text(), re.S):
+            keys = set(re.findall(r'"([a-zA-Z_]+)"\s*:', match.group(1)))
+            assert not keys & reserved, (path, keys & reserved)

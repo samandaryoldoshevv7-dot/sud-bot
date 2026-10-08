@@ -166,7 +166,7 @@ class QuestionGenerator:
         logger.info(
             "Question generation finished",
             extra={
-                "created": result.created,
+                "created_count": result.created,
                 "requested": request.count,
                 "rounds": result.rounds,
                 "rejected": dict(result.rejected),

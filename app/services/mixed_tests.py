@@ -176,7 +176,7 @@ async def build_mixed_test(
         "Mixed test built",
         extra={
             "test_id": test_id,
-            "created": report.created,
+            "created_count": report.created,
             "requested": report.requested,
             "per_source": report.per_source,
         },
