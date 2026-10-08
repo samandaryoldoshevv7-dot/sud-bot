@@ -14,6 +14,8 @@ from zoneinfo import ZoneInfo
 from pydantic import AliasChoices, Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+DEFAULT_VALIDATION_MODEL = "openai/gpt-oss-20b"
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -44,6 +46,8 @@ class Settings(BaseSettings):
     groq_api_key: SecretStr | None = None
     groq_model: str = "openai/gpt-oss-120b"
     groq_fallback_models: str = "openai/gpt-oss-20b,qwen/qwen3-32b,llama-3.1-8b-instant"
+    # Checks (blind source check, quality review) run on a smaller model so the main model's daily
+    # token limit lasts longer; set GROQ_VALIDATION_MODEL to the main model to use it for checks too.
     groq_validation_model: str = ""
     groq_temperature: float = 0.3
     groq_timeout_seconds: float = 60.0
@@ -117,7 +121,7 @@ class Settings(BaseSettings):
 
     @property
     def validation_model(self) -> str:
-        return self.groq_validation_model or self.groq_model
+        return self.groq_validation_model or DEFAULT_VALIDATION_MODEL
 
     @property
     def ai_enabled(self) -> bool:
