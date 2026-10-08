@@ -108,3 +108,13 @@ async def session_maker(engine):
 async def session(session_maker):
     async with session_maker() as s:
         yield s
+
+
+@pytest.fixture(autouse=True)
+def _fresh_ai_cache():
+    """The AI result cache is process-wide; tests with scripted answers must not share it."""
+    from app.ai.structured import clear_cache
+
+    clear_cache()
+    yield
+    clear_cache()

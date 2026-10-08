@@ -96,6 +96,14 @@ class SourceVerification(_Strict):
         return value
 
 
+class SourceVerificationItem(SourceVerification):
+    index: int
+
+
+class SourceVerificationBatch(_Strict):
+    results: list[SourceVerificationItem] = Field(default_factory=list)
+
+
 class QualityValidation(_Strict):
     understandable: bool
     single_correct: bool
@@ -111,13 +119,12 @@ class QualityValidation(_Strict):
         return value.strip().lower() if isinstance(value, str) else value
 
 
-class TopicAssignment(_Strict):
+class QualityValidationItem(QualityValidation):
     index: int
-    topic: str = Field(min_length=2, max_length=120)
 
 
-class TopicClassification(_Strict):
-    topics: list[TopicAssignment]
+class QualityValidationBatch(_Strict):
+    results: list[QualityValidationItem] = Field(default_factory=list)
 
 
 class ExplanationResponse(_Strict):

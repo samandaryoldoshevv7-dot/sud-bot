@@ -437,11 +437,27 @@ Har bir savolda saqlanadi: manba hujjat, manba bo'lak, sahifa, manba havolasi (b
 metama'lumotlaridan quriladi, AI'dan emas), iqtibos, mavzu, qiyinlik, to'g'ri javob, ichki tekshiruv
 metama'lumotlari (xodimlarga ko'rsatilmaydi). Manba yetarli bo'lmasa model `rejected` qaytaradi va savol
 yaratilmaydi. Promptlar: [`app/ai/prompts.py`](app/ai/prompts.py) (generatsiya, validatsiya,
-izoh, mavzu tasnifi, manba tekshiruvi).
+izoh, manba tekshiruvi).
 
-**Groq limitlari:** bepul tarifda daqiqalik token limiti past. Provayder 429 javoblarida
-`retry-after` bo'yicha kutib qayta urinadi. Ko'p savol kerak bo'lsa: `GROQ_VALIDATION_MODEL=llama-3.1-8b-instant`
-(tekshiruvlar uchun alohida limit) yoki pullik tarif.
+**Groq limitini tejash:**
+* Groq'ga faqat savol tuzishda murojaat qilinadi. Xodimlarning xabarlari, testlar va natijalar AI ishlatmaydi,
+  suhbat tarixi (history) yuborilmaydi.
+* Bitta bo'lakdagi savollar **bitta** ko'r manba tekshiruvi va **bitta** sifat tekshiruvi so'rovida
+  tekshiriladi. Mavzu generatsiyaning o'zida (mavjud mavzular ro'yxatidan) tanlanadi. Natijada 2 savollik
+  bo'lak uchun 6 o'rniga 3 so'rov ketadi: 10 savol uchun 30 o'rniga 15 so'rov, ~27% kam matn
+  (`tests/test_ai_efficiency.py`). Paketdan javob kelmagan savol alohida tekshiriladi — hech biri
+  tekshiruvsiz qolmaydi.
+* Bir xil deterministik tekshiruv (temperature 0) 6 soat davomida keshdan olinadi (`AI_CACHE_TTL_SECONDS`).
+* Fayl qayta ishlansa yoki bot qayta ishga tushsa, bankda yetarli savol bo'lsa, avto-savollar qayta tuzilmaydi.
+* Bir vaqtda ko'pi bilan `GROQ_MAX_CONCURRENCY` (standart 2) so'rov ketadi. Groq javob sarlavhalarida
+  (`x-ratelimit-remaining-tokens`) daqiqalik limit tugayotgani ko'rinsa, bot keyingi so'rovdan oldin limit
+  tiklanishini kutadi va 429 xatosiga tushmaydi.
+* 429 bo'lsa — eksponensial kutish (5s, 10s, 20s… jitter bilan, maks. 60s). Kunlik limit bo'lsa — kutib
+  o'tirmay, darhol «N daqiqadan keyin» deb xabar beradi.
+* Token sarfi har bir so'rov uchun logga yoziladi (`input_tokens`, `output_tokens`), har bir ish
+  oxirida adminga «🔢 AI sarfi: …», kunlik jami esa **📊 Statistika** da ko'rsatiladi.
+* `GROQ_API_KEY` faqat muhit o'zgaruvchisidan olinadi (`SecretStr`), loglarda yashiriladi va hech qachon
+  Telegram'ga chiqarilmaydi.
 
 **Provayder modulli:** yangi LLM qo'shish uchun `app/ai/base.py` dagi `LLMProvider` ni amalga oshiring va
 `app/ai/factory.py` ga qo'shing.

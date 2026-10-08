@@ -48,6 +48,10 @@ class Settings(BaseSettings):
     groq_temperature: float = 0.3
     groq_timeout_seconds: float = 60.0
     ai_max_retries: int = 3
+    # At most this many Groq requests at the same time (bursts cause 429 rate-limit errors).
+    groq_max_concurrency: int = Field(default=2, ge=1, le=10)
+    # Identical deterministic AI checks (temperature 0) are answered from memory for this long.
+    ai_cache_ttl_seconds: int = 6 * 3600
     ai_min_confidence: float = 0.7
     ai_excerpt_min_similarity: int = 88
     ai_questions_per_chunk: int = 2

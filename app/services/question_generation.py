@@ -18,11 +18,11 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 
 from rapidfuzz import fuzz, process
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai import prompts
-from app.ai.base import AIError, LLMProvider
+from app.ai.base import AIError, AIResponseError, LLMProvider
 from app.ai.structured import structured_call
 from app.config import get_settings
 from app.models import (
@@ -44,8 +44,9 @@ from app.schemas.ai import (
     GeneratedQuestion,
     GenerationResponse,
     QualityValidation,
+    QualityValidationBatch,
     SourceVerification,
-    TopicClassification,
+    SourceVerificationBatch,
 )
 from app.services.question_validation import check_question, is_duplicate
 from app.utils.text import normalize_topic, text_hash
@@ -254,6 +255,7 @@ class QuestionGenerator:
         by_id = {c.id: c for c in context}
         ctx = [prompts.ContextChunk(c.id, self._ref(c, titles)[0], c.text, *self._identity(c, titles)) for c in context]
         existing = await self._existing_questions(session, list(by_id))
+        topic_names = await self._topic_names(session)
 
         response = await structured_call(
             self.llm,
@@ -265,6 +267,7 @@ class QuestionGenerator:
                 difficulties=difficulties,
                 focus=request.focus_query,
                 avoid_questions=existing,
+                existing_topics=topic_names,
             ),
             GenerationResponse,
             retries=self.settings.ai_max_retries,
@@ -279,7 +282,7 @@ class QuestionGenerator:
             )
             return []
 
-        candidates: list[_Candidate] = []
+        pending: list[tuple[GeneratedQuestion, SourceChunk, float]] = []
         seen = list(existing)
         sources = [(c.id, c.text) for c in context]
         for item in response.questions[:n]:
@@ -311,20 +314,23 @@ class QuestionGenerator:
                 result.rejected["source_mismatch"] += 1
                 logger.info("Generated question names a different source", extra={"chunk_id": chunk.id})
                 continue
-            verified = await self._verify(item, chunk, result)
-            if verified is None:
-                continue
-            reference, kind = self._ref(chunk, titles)
             seen.append(item.question)
-            candidates.append(
-                _Candidate(item, chunk, reference, kind, {**verified, "excerpt_score": check.match.score})
-            )  # type: ignore[union-attr]
+            pending.append((item, chunk, check.match.score))  # type: ignore[union-attr]
 
+        # All questions of this chunk are verified together: one blind source check and one quality
+        # review per chunk instead of two requests per question (same checks, same strictness).
+        candidates: list[_Candidate] = []
+        for item, chunk, score, verified in await self._verify_all(pending, result):
+            reference, kind = self._ref(chunk, titles)
+            candidates.append(_Candidate(item, chunk, reference, kind, {**verified, "excerpt_score": score}))
         if not candidates:
             return []
-        topics = await self._classify_topics(session, candidates)
+        known_topics = list((await session.execute(select(Topic))).scalars().all())
         stored: list[Question] = []
-        for cand, topic in zip(candidates, topics, strict=True):
+        for cand in candidates:
+            # The generator already picked the topic (from the existing topic list when one fits);
+            # near-identical names are merged locally — no separate classification request.
+            topic = await get_or_create_topic(session, cand.data.topic, known_topics)
             question = Question(
                 question_text=cand.data.question.strip(),
                 options={k: v.strip() for k, v in cand.data.options.items()},
@@ -358,6 +364,7 @@ class QuestionGenerator:
     async def _source_verification(
         self, source_text: str, question: str, options: dict[str, str]
     ) -> SourceVerification:
+        # Cached: re-checking the same question on the same text (e.g. admin presses twice) is free.
         return await structured_call(
             self.llm,
             prompts.SOURCE_VERIFICATION_SYSTEM,
@@ -368,86 +375,158 @@ class QuestionGenerator:
             temperature=0.0,
             max_tokens=500,
             purpose="source_verification",
+            cache_ttl=self.settings.ai_cache_ttl_seconds,
         )
 
-    async def _verify(self, item: GeneratedQuestion, chunk: SourceChunk, result: GenerationResult) -> dict | None:
+    async def _topic_names(self, session: AsyncSession, limit: int = 40) -> list[str]:
+        """Most used topic names, so the generator reuses them (keeps topics consistent)."""
+        stmt = (
+            select(Topic.name)
+            .join(Question, Question.topic_id == Topic.id)
+            .group_by(Topic.id, Topic.name)
+            .order_by(func.count(Question.id).desc())
+            .limit(limit)
+        )
+        return list((await session.execute(stmt)).scalars().all())
+
+    async def _verify_batch(self, chunk: SourceChunk, items: list[GeneratedQuestion]) -> list[SourceVerification]:
+        """Blind answers for several questions on the same source text in ONE request; anything the
+        batch does not answer cleanly is checked again one by one (never skipped)."""
+        answers: dict[int, SourceVerification] = {}
+        if len(items) > 1:
+            try:
+                batch = await structured_call(
+                    self.llm,
+                    prompts.SOURCE_VERIFICATION_BATCH_SYSTEM,
+                    prompts.source_verification_batch_user(chunk.text, [(q.question, q.options) for q in items]),
+                    SourceVerificationBatch,
+                    retries=self.settings.ai_max_retries,
+                    model=self.settings.validation_model,
+                    temperature=0.0,
+                    max_tokens=350 * len(items) + 200,
+                    purpose="source_verification",
+                    cache_ttl=self.settings.ai_cache_ttl_seconds,
+                )
+                answers = {r.index: r for r in batch.results if 0 <= r.index < len(items)}
+            except AIResponseError as exc:
+                logger.warning("Batch source verification failed; checking one by one", extra={"error": str(exc)[:200]})
+        return [
+            answers.get(i) or await self._source_verification(chunk.text, q.question, q.options)
+            for i, q in enumerate(items)
+        ]
+
+    async def _quality_batch(self, items: list[GeneratedQuestion]) -> list[QualityValidation]:
+        reviews: dict[int, QualityValidation] = {}
+        rows = [(q.source_excerpt, q.question, q.options, q.correct_answer, q.explanation) for q in items]
+        if len(items) > 1:
+            try:
+                batch = await structured_call(
+                    self.llm,
+                    prompts.QUESTION_VALIDATION_BATCH_SYSTEM,
+                    prompts.question_validation_batch_user(rows),
+                    QualityValidationBatch,
+                    retries=self.settings.ai_max_retries,
+                    model=self.settings.validation_model,
+                    temperature=0.0,
+                    max_tokens=400 * len(items) + 200,
+                    purpose="quality_validation",
+                    cache_ttl=self.settings.ai_cache_ttl_seconds,
+                )
+                reviews = {r.index: r for r in batch.results if 0 <= r.index < len(items)}
+            except AIResponseError as exc:
+                logger.warning("Batch quality review failed; reviewing one by one", extra={"error": str(exc)[:200]})
+        out = []
+        for i, row in enumerate(rows):
+            review = reviews.get(i)
+            if review is None:
+                review = await structured_call(
+                    self.llm,
+                    prompts.QUESTION_VALIDATION_SYSTEM,
+                    prompts.question_validation_user(*row),
+                    QualityValidation,
+                    retries=self.settings.ai_max_retries,
+                    model=self.settings.validation_model,
+                    temperature=0.0,
+                    max_tokens=600,
+                    purpose="quality_validation",
+                    cache_ttl=self.settings.ai_cache_ttl_seconds,
+                )
+            out.append(review)
+        return out
+
+    async def _verify_all(
+        self, pending: list[tuple[GeneratedQuestion, SourceChunk, float]], result: GenerationResult
+    ) -> list[tuple[GeneratedQuestion, SourceChunk, float, dict]]:
+        """Blind source verification (grouped by chunk) → quality review (one batch) → explanation fix."""
+        if not pending:
+            return []
+        by_chunk: dict[int, list[int]] = {}
+        for index, (_, chunk, _) in enumerate(pending):
+            by_chunk.setdefault(chunk.id, []).append(index)
+        verifications: dict[int, SourceVerification] = {}
+        for indexes in by_chunk.values():
+            chunk = pending[indexes[0]][1]
+            for index, verification in zip(
+                indexes, await self._verify_batch(chunk, [pending[i][0] for i in indexes]), strict=True
+            ):
+                verifications[index] = verification
         # 1) Blind answer: an independent pass must reach the same key using only the source.
-        verification = await self._source_verification(chunk.text, item.question, item.options)
-        if not verification.supported or verification.answer is None:
-            result.rejected["source_not_supporting"] += 1
-            return None
-        if verification.answer != item.correct_answer:
-            result.rejected["verifier_disagrees"] += 1
-            return None
-        if verification.confidence < self.settings.ai_min_confidence:
-            result.rejected["low_confidence"] += 1
-            return None
-
+        passed: list[int] = []
+        for index, (item, _, _) in enumerate(pending):
+            verification = verifications[index]
+            if not verification.supported or verification.answer is None:
+                result.rejected["source_not_supporting"] += 1
+            elif verification.answer != item.correct_answer:
+                result.rejected["verifier_disagrees"] += 1
+            elif verification.confidence < self.settings.ai_min_confidence:
+                result.rejected["low_confidence"] += 1
+            else:
+                passed.append(index)
+        if not passed:
+            return []
         # 2) Quality review with the answer key.
-        quality = await structured_call(
-            self.llm,
-            prompts.QUESTION_VALIDATION_SYSTEM,
-            prompts.question_validation_user(
-                item.source_excerpt, item.question, item.options, item.correct_answer, item.explanation
-            ),
-            QualityValidation,
-            retries=self.settings.ai_max_retries,
-            model=self.settings.validation_model,
-            temperature=0.0,
-            max_tokens=600,
-            purpose="quality_validation",
-        )
-        if (
-            quality.verdict != "accept"
-            or not quality.single_correct
-            or not quality.understandable
-            or not quality.options_meaningful
-            or quality.ambiguous
-        ):
-            result.rejected["quality_rejected"] += 1
-            logger.info("Question rejected by quality validation", extra={"issues": "; ".join(quality.issues)[:300]})
-            return None
-
-        explanation_regenerated = False
-        if not quality.explanation_consistent:
-            new_explanation = await self.regenerate_explanation(
-                chunk.text, item.question, item.options, item.correct_answer
+        reviews = await self._quality_batch([pending[i][0] for i in passed])
+        accepted = []
+        for index, quality in zip(passed, reviews, strict=True):
+            item, chunk, score = pending[index]
+            if (
+                quality.verdict != "accept"
+                or not quality.single_correct
+                or not quality.understandable
+                or not quality.options_meaningful
+                or quality.ambiguous
+            ):
+                result.rejected["quality_rejected"] += 1
+                logger.info(
+                    "Question rejected by quality validation", extra={"issues": "; ".join(quality.issues)[:300]}
+                )
+                continue
+            explanation_regenerated = False
+            if not quality.explanation_consistent:
+                new_explanation = await self.regenerate_explanation(
+                    chunk.text, item.question, item.options, item.correct_answer
+                )
+                if new_explanation is None:
+                    result.rejected["explanation_unsupported"] += 1
+                    continue
+                item.explanation = new_explanation
+                explanation_regenerated = True
+            verification = verifications[index]
+            accepted.append(
+                (
+                    item,
+                    chunk,
+                    score,
+                    {
+                        "confidence": verification.confidence,
+                        "verifier_answer": verification.answer,
+                        "verifier_evidence": verification.evidence[:500],
+                        "quality_issues": quality.issues[:5],
+                        "explanation_regenerated": explanation_regenerated,
+                    },
+                )
             )
-            if new_explanation is None:
-                result.rejected["explanation_unsupported"] += 1
-                return None
-            item.explanation = new_explanation
-            explanation_regenerated = True
-
-        return {
-            "confidence": verification.confidence,
-            "verifier_answer": verification.answer,
-            "verifier_evidence": verification.evidence[:500],
-            "quality_issues": quality.issues[:5],
-            "explanation_regenerated": explanation_regenerated,
-        }
-
-    async def _classify_topics(self, session: AsyncSession, candidates: list[_Candidate]) -> list[Topic | None]:
-        existing = list((await session.execute(select(Topic))).scalars().all())
-        names = [t.name for t in existing]
-        suggested = [c.data.topic for c in candidates]
-        try:
-            response = await structured_call(
-                self.llm,
-                prompts.TOPIC_CLASSIFICATION_SYSTEM,
-                prompts.topic_classification_user(names, [(c.data.question, c.data.topic) for c in candidates]),
-                TopicClassification,
-                retries=self.settings.ai_max_retries,
-                temperature=0.0,
-                max_tokens=400 + 40 * len(candidates),
-                purpose="topic_classification",
-            )
-            for assignment in response.topics:
-                if 0 <= assignment.index < len(suggested):
-                    suggested[assignment.index] = assignment.topic
-        except AIError as exc:
-            logger.warning("Topic classification failed; using generator topics", extra={"error": str(exc)[:200]})
-        return [await get_or_create_topic(session, name, existing) for name in suggested]
+        return accepted
 
 
 def _norm_source(value: str) -> str:

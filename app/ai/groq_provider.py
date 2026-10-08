@@ -9,17 +9,22 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import random
 import re
+import time
 
 import groq
 from groq import AsyncGroq
 
+from app.ai import usage
 from app.ai.base import AINotConfiguredError, AIProviderError, LLMProvider
 from app.config import Settings
 
 logger = logging.getLogger(__name__)
 
 RATE_LIMIT_EXTRA_RETRIES = 3
+# Pause before the next request when Groq reports fewer tokens left in the current minute.
+LOW_TOKENS_REMAINING = 2500
 # Extra completion budget for reasoning models (hidden reasoning tokens count toward the limit).
 REASONING_TOKEN_BUDGET = 3000
 _MODEL_GONE_MARKERS = (
@@ -44,8 +49,55 @@ def _raw_retry_after(exc: groq.RateLimitError) -> float:
         return 0.0
 
 
-def _retry_after_seconds(exc: groq.RateLimitError) -> float:
-    return min(max(_raw_retry_after(exc), 5.0), 60.0)
+def _retry_after_seconds(exc: groq.RateLimitError, attempt: int = 1) -> float:
+    """Exponential backoff with jitter (5s, 10s, 20s... max 60s), never shorter than Retry-After."""
+    backoff = 5.0 * 2 ** (attempt - 1) + random.uniform(0, 2)
+    return min(max(_raw_retry_after(exc), backoff), 60.0)
+
+
+def _duration_seconds(value: str | None) -> float:
+    """Groq reset headers look like "7.66s", "2m59.56s" or "1h2m3s"."""
+    if not value:
+        return 0.0
+    total = 0.0
+    for amount, unit in re.findall(r"([\d.]+)(ms|h|m|s)", value):
+        total += float(amount) * {"ms": 0.001, "h": 3600, "m": 60, "s": 1}[unit]
+    return total
+
+
+class _Pacer:
+    """Process-wide request pacing shared by every caller (questions of several files are generated
+    at the same time): at most ``limit`` concurrent requests, and a pause when Groq's response
+    headers say the per-minute token budget is nearly used up — so requests wait briefly instead
+    of failing with 429."""
+
+    def __init__(self) -> None:
+        self._limit = 0
+        self._semaphore: asyncio.Semaphore | None = None
+        self._resume_at = 0.0
+
+    def semaphore(self, limit: int) -> asyncio.Semaphore:
+        if self._semaphore is None or self._limit != limit:
+            self._semaphore, self._limit = asyncio.Semaphore(max(1, limit)), limit
+        return self._semaphore
+
+    async def wait(self) -> None:
+        delay = self._resume_at - time.monotonic()
+        if delay > 0:
+            logger.info("Pausing before the next AI request (token budget)", extra={"seconds": round(delay, 1)})
+            await asyncio.sleep(delay)
+
+    def observe(self, headers) -> None:
+        try:
+            remaining = int(headers.get("x-ratelimit-remaining-tokens", ""))
+        except (TypeError, ValueError):
+            return
+        if remaining < LOW_TOKENS_REMAINING:
+            reset = min(_duration_seconds(headers.get("x-ratelimit-reset-tokens")), 60.0)
+            self._resume_at = max(self._resume_at, time.monotonic() + reset)
+
+
+_pacer = _Pacer()
 
 
 def _long_limit_wait(exc: groq.RateLimitError) -> float | None:
@@ -156,8 +208,8 @@ class GroqProvider(LLMProvider):
                 if attempt > RATE_LIMIT_EXTRA_RETRIES:
                     logger.warning("Groq rate limit exhausted after retries")
                     raise AIProviderError("AI provider rate limit exceeded") from exc
-                wait = _retry_after_seconds(exc)
-                logger.info("Groq rate limited, waiting", extra={"seconds": wait, "attempt": attempt})
+                wait = _retry_after_seconds(exc, attempt)
+                logger.info("Groq rate limited, waiting", extra={"seconds": round(wait, 1), "attempt": attempt})
                 await asyncio.sleep(wait)
         raise AIProviderError("AI provider rate limit exceeded")  # pragma: no cover
 
@@ -170,14 +222,18 @@ class GroqProvider(LLMProvider):
             if "gpt-oss" in model.lower():
                 kwargs["reasoning_effort"] = "low"
         try:
-            response = await self._client.chat.completions.create(
-                model=model,
-                messages=messages,  # type: ignore[arg-type]
-                temperature=self._settings.groq_temperature if temperature is None else temperature,
-                max_tokens=max_tokens,
-                response_format={"type": "json_object"},
-                **kwargs,
-            )
+            async with _pacer.semaphore(self._settings.groq_max_concurrency):
+                await _pacer.wait()
+                raw = await self._client.chat.completions.with_raw_response.create(
+                    model=model,
+                    messages=messages,  # type: ignore[arg-type]
+                    temperature=self._settings.groq_temperature if temperature is None else temperature,
+                    max_tokens=max_tokens,
+                    response_format={"type": "json_object"},
+                    **kwargs,
+                )
+                _pacer.observe(raw.headers)
+            response = await raw.parse()
         except groq.AuthenticationError as exc:
             logger.error("Groq authentication failed (check GROQ_API_KEY)", extra={"status": exc.status_code})
             raise AIProviderError("AI provider authentication failed (check GROQ_API_KEY)") from exc
@@ -201,14 +257,9 @@ class GroqProvider(LLMProvider):
 
         choice = response.choices[0] if response.choices else None
         content = choice.message.content if choice and choice.message else None
-        usage = getattr(response, "usage", None)
-        logger.debug(
-            "groq completion",
-            extra={
-                "model": model,
-                "prompt_tokens": getattr(usage, "prompt_tokens", None),
-                "completion_tokens": getattr(usage, "completion_tokens", None),
-            },
+        stats = getattr(response, "usage", None)
+        usage.record(
+            model, int(getattr(stats, "prompt_tokens", 0) or 0), int(getattr(stats, "completion_tokens", 0) or 0)
         )
         return content or ""
 

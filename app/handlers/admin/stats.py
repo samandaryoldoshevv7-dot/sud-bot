@@ -55,6 +55,11 @@ async def cb_dashboard(callback: CallbackQuery, session: AsyncSession) -> None:
         ),
         t("stats.answers", total=d.answers_total, correct=d.answers_correct, acc=pct(accuracy)),
     ]
+    from app.ai import usage as ai_usage
+
+    today = ai_usage.today()
+    lines += ["", t("stats.ai_today", req=today.requests, inp=today.input_tokens, out=today.output_tokens,
+                    total=today.total_tokens, cached=today.cache_hits)]  # fmt: skip
     if d.weak_topics:
         lines += ["", t("stats.weak_topics")]
         lines += [f"• {esc(s.topic)} — {pct(s.percent)} ({s.correct}/{s.total})" for s in d.weak_topics]

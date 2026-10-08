@@ -507,7 +507,11 @@ async def build_and_send(
         except TelegramBadRequest:
             pass
 
-    report = await build_mixed_test(session_maker, test_id, make_generator if ai_available() else None, progress)
+    from app.ai import usage as ai_usage
+    from app.handlers.admin.materials import usage_text
+
+    with ai_usage.track() as spent:
+        report = await build_mixed_test(session_maker, test_id, make_generator if ai_available() else None, progress)
     per_source = "\n".join(f"• {esc(name)} — {n}" for name, n in report.per_source.items())
     if report.failed_sources:
         per_source += "\n" + t("ct.failed_sources", s=esc(", ".join(report.failed_sources)))
@@ -528,6 +532,8 @@ async def build_and_send(
             rows.append([(t("tests.btn.preview_short"), AdminCB(s="tst_rv", id=test_id, p=1))])
         rows.append([(t("tests.btn.open"), AdminCB(s="tst_v", id=test_id))])
         markup = kb(*rows)
+    if spent.requests or spent.cache_hits:
+        text += "\n\n" + usage_text(spent)
     try:
         await bot.edit_message_text(text, chat_id=chat_id, message_id=message_id, reply_markup=markup)
     except TelegramBadRequest:

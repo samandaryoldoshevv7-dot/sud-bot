@@ -17,6 +17,7 @@ from aiogram.types import CallbackQuery, Message
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.ai import usage as ai_usage
 from app.ai.base import AIError
 from app.config import get_settings
 from app.documents import DocumentError, detect_file_type
@@ -321,7 +322,10 @@ async def _process_and_report(
         return
     # Automatic step: build source-grounded questions from the new material right away.
     async with session_maker() as session:
-        count = int(await settings_service.get_value(session, "auto_generate_questions"))
+        wanted = int(await settings_service.get_value(session, "auto_generate_questions"))
+        stats = await material_service.material_question_stats(session, material_id)
+    # Re-processing (or a restart) must not pay the AI again for questions the bank already has.
+    count = max(0, wanted - stats["approved"] - stats["pending"])
     if count > 0:
         status_msg = await bot.send_message(chat_id, t("gen.auto_started", n=count))
         await _generate_to_bank(session_maker, bot, material_id, count, status_msg.chat.id, status_msg.message_id)
@@ -572,10 +576,12 @@ async def _generate_to_bank(
     async with session_maker() as session:
         try:
             generator = make_generator()
-            result = await generator.generate(
-                session, GenerationRequest(scope=SourceScope(material_ids=[material_id]), count=count), progress
-            )
+            with ai_usage.track() as spent:
+                result = await generator.generate(
+                    session, GenerationRequest(scope=SourceScope(material_ids=[material_id]), count=count), progress
+                )
             text = gen_summary_text(result.created, count, dict(result.rejected), result.error)
+            text += "\n" + usage_text(spent)
         except AIError as exc:
             logger.error("Generation failed", extra={"material_id": material_id, "error": str(exc)[:200]})
             text = t("gen.failed", error=esc(_friendly_error(str(exc))))
@@ -590,6 +596,12 @@ async def _generate_to_bank(
         await bot.edit_message_text(text, chat_id=chat_id, message_id=message_id, reply_markup=markup)
     except TelegramBadRequest:
         await bot.send_message(chat_id, text, reply_markup=markup)
+
+
+def usage_text(spent) -> str:
+    """ "🔢 AI: 9 so'rov · 18 400 token (kirish 14 100, chiqish 4 300)"."""
+    return t("ai.usage", req=spent.requests, total=f"{spent.total_tokens:,}".replace(",", " "),
+             inp=f"{spent.input_tokens:,}".replace(",", " "), out=f"{spent.output_tokens:,}".replace(",", " "))  # fmt: skip
 
 
 def gen_summary_text(created: int, requested: int, rejected: dict, error: str | None) -> str:

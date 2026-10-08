@@ -486,6 +486,8 @@ TEXTS: dict[str, str] = {
     "gen.reason.no_sources": "Testga tayyor manba (material yoki yangilik) tanlanmagan",
     "gen.reason.not_enough": "Yetarli savol yig'ilmadi — qo'shimcha material yuklang yoki savollar sonini kamaytiring",
     "gen.reason.interrupted": "Bot qayta ishga tushgani uchun savollarni yig'ish to'xtadi — qayta bosing",
+    "ai.usage": "🔢 AI sarfi: {req} so'rov · {total} token (kirish {inp}, chiqish {out})",
+    "stats.ai_today": "🔢 Bugungi AI sarfi: {req} so'rov · {total} token (kirish {inp}, chiqish {out}) · keshdan: {cached}",
     "ai.err.auth": "Groq API kaliti noto'g'ri (Railway'da GROQ_API_KEY ni tekshiring)",
     "ai.err.model": "Groq modeli mavjud emas — Railway'da GROQ_MODEL ni o'chiring yoki openai/gpt-oss-120b qiling",
     "ai.err.rate_limit": "Groq limiti tugadi — bir necha daqiqadan keyin qayta urinib ko'ring",
