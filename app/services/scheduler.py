@@ -57,7 +57,9 @@ async def launch_test(bot: Bot, session_maker: async_sessionmaker[AsyncSession],
             mode_group = False
             await announce_test(bot, session, test)
     if mode_group:
-        await group_tests.start_in_group(bot, session_maker, test_id)
+        _, ok = await group_tests.start_in_group(bot, session_maker, test_id)
+        if not ok:
+            await notify_admins(bot, t("gt.admin_post_failed_auto", id=test_id))
 
 
 async def run_tick(bot: Bot | None, session_maker: async_sessionmaker[AsyncSession]) -> dict:

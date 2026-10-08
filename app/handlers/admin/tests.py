@@ -35,7 +35,7 @@ from app.services import groups as group_service
 from app.services import test_builder as tb
 from app.services.ai_runtime import ai_available, make_generator
 from app.services.notifications import announce_test
-from app.services.scheduler import launch_test
+from app.services.scheduler import claim_marker, launch_test
 from app.services.test_builder import TestStateError
 from app.statistics.participation import participation
 from app.utils.text import esc, pct, truncate
@@ -200,6 +200,7 @@ async def render_test(target, session: AsyncSession, test_id: int) -> None:
                     (t("tests.btn.close"), AdminCB(s="tst_close", id=test.id)),
                 ]
             )
+            rows.append([(t("tests.btn.start_in_group"), AdminCB(s="tst_grp", id=test.id))])
             rows.append([(t("tests.btn.announce"), AdminCB(s="tst_ann", id=test.id))])
         rows.append([(t("tests.btn.preview", n=total), AdminCB(s="tst_rv", id=test.id, p=1))])
     rows.append([(t("btn.refresh"), AdminCB(s="tst_v", id=test.id))])
@@ -487,7 +488,7 @@ async def _announce_now(session_maker: async_sessionmaker[AsyncSession], bot: Bo
 @router.callback_query(AdminCB.filter(F.s == "tst_grp"))
 async def cb_start_in_group(callback: CallbackQuery, callback_data: AdminCB, session: AsyncSession) -> None:
     test = await session.get(Test, callback_data.id)
-    if test is None or test.status != TestStatus.READY:
+    if test is None or test.status not in (TestStatus.READY, TestStatus.ACTIVE):
         await callback.answer(t("test_error.not_ready"), show_alert=True)
         return
     groups = await group_service.list_groups(session, active_only=True)
@@ -524,6 +525,20 @@ async def cb_start_in_group_go(
     if test is None or group is None or not group.is_active:
         await callback.answer(t("common.not_found"), show_alert=True)
         return
+    assert isinstance(callback.message, Message)
+    admin_chat = callback.message.chat.id
+    if test.status == TestStatus.ACTIVE:
+        # Already running (e.g. announced in private chats): additionally post it into this group.
+        if test.deadline_at <= utcnow():
+            await callback.answer(t("test_error.deadline_passed"), show_alert=True)
+            return
+        await callback.answer(t("tests.group_starting"))
+        background.spawn(
+            group_tests.post_to_group_and_report(bot, session_maker, test.id, group.id, admin_chat),
+            name=f"group-post-{test.id}-{group.id}",
+        )
+        await render_test(callback, session, test.id)
+        return
     if test.status != TestStatus.READY or test.published_at is not None:
         await callback.answer(t("test_error.not_ready"), show_alert=True)
         return
@@ -535,11 +550,16 @@ async def cb_start_in_group_go(
     except TestStateError as exc:
         await callback.answer(t(f"test_error.{exc.code}"), show_alert=True)
         return
-    if test.status == TestStatus.ACTIVE:
+    if test.status == TestStatus.ACTIVE and await claim_marker(session, test.id, "announced_at"):
         await callback.answer(t("tests.group_starting"))
-        background.spawn(launch_test(bot, session_maker, test.id), name=f"group-test-{test.id}")
-    else:
+        background.spawn(
+            group_tests.post_to_group_and_report(bot, session_maker, test.id, group.id, admin_chat),
+            name=f"group-test-{test.id}",
+        )
+    elif test.status != TestStatus.ACTIVE:
         await callback.answer(t("tests.group_scheduled", start=fmt_dt(test.starts_at)), show_alert=True)
+    else:
+        await callback.answer()
     await render_test(callback, session, test.id)
 
 

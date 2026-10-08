@@ -28,13 +28,19 @@ class RecordingSession(BaseSession):
     def __init__(self) -> None:
         super().__init__()
         self.requests: list[TelegramMethod] = []
-        self.member_ids: set[int] = set()  # users getChatMember reports as group members
+        self.member_ids: set[int] = set()  # users getChatMember reports as members of ANY group
+        self.members_by_chat: dict[int, set[int]] = {}  # per-group membership (checked first)
+        self.forbidden_chats: set[int] = set()  # chats where the bot may not write
 
     async def make_request(self, bot: Bot, method: TelegramMethod, timeout: int | None = None) -> Any:
         self.requests.append(method)
         now = datetime.now(UTC)
         if isinstance(method, GetMe):
             return User(id=42, is_bot=True, first_name="Court Bot", username="court_test_bot")
+        if isinstance(method, SendMessage) and int(method.chat_id) in self.forbidden_chats:
+            from aiogram.exceptions import TelegramForbiddenError
+
+            raise TelegramForbiddenError(method=method, message="Forbidden: bot is not a member of the chat")
         if isinstance(method, (SendMessage, SendDocument)):
             chat_id = int(method.chat_id)
             return Message(
@@ -55,7 +61,12 @@ class RecordingSession(BaseSession):
             )
         if isinstance(method, GetChatMember):
             member_user = User(id=int(method.user_id), is_bot=False, first_name="x")
-            if int(method.user_id) in self.member_ids:
+            chat_members = self.members_by_chat.get(int(method.chat_id))
+            if chat_members is not None:
+                is_member = int(method.user_id) in chat_members
+            else:
+                is_member = int(method.user_id) in self.member_ids
+            if is_member:
                 return ChatMemberMember(user=member_user)
             return ChatMemberLeft(user=member_user)
         if isinstance(method, (AnswerCallbackQuery, EditMessageReplyMarkup, DeleteMessage)):

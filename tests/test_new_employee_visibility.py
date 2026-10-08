@@ -105,3 +105,75 @@ async def test_new_group_member_is_told_about_private_chat_tests(tg, session_mak
     async with session_maker() as session:
         user = (await session.execute(select(DbUser).where(DbUser.telegram_id == 9305))).scalar_one()
         assert user.id
+
+
+async def _wait_background():
+    import asyncio
+
+    from app.services import background
+
+    for _ in range(100):
+        if background.running_count() == 0:
+            return
+        await asyncio.sleep(0.05)
+
+
+async def test_admin_can_start_an_already_running_test_in_a_group(tg, session_maker):  # noqa: F811
+    async with session_maker() as session:
+        group = await _group(session)
+        test = await _active_test(session_maker, session, title="Ishlayotgan test")  # private mode, ACTIVE
+        group_db_id, test_id = group.id, test.id
+    await tg(callback_update(ADMIN, AdminCB(s="tst_v", id=test_id).pack()))
+    buttons = [b.text for row in tg.session.last_markup().inline_keyboard for b in row]
+    assert "▶️ Guruhda boshlash" in buttons
+    tg.session.clear()
+    await tg(callback_update(ADMIN, AdminCB(s="tst_grp_go", id=test_id, v=str(group_db_id)).pack()))
+    await _wait_background()
+    group_msgs = tg.session.sent_to(GROUP_CHAT)
+    assert len(group_msgs) == 3 and "YANGI TEST BOSHLANDI" in group_msgs[0].text
+    assert any("guruhiga yuborildi" in m.text for m in tg.session.sent_to(ADMIN))
+    # A group member who answers there is recorded against the same test.
+    async with session_maker() as session:
+        post = (await session.execute(select(group_tests.GroupTestPost))).scalar_one()
+        msg = (
+            (
+                await session.execute(
+                    select(group_tests.GroupQuestionMessage).where(group_tests.GroupQuestionMessage.post_id == post.id)
+                )
+            )
+            .scalars()
+            .first()
+        )
+        result = await group_tests.submit_group_answer(session, tg_user(9401, "Guruhdan"), msg.id, "A")
+        assert result.code == group_tests.GroupAnswerCode.ACCEPTED
+
+
+async def test_admin_is_told_when_the_bot_cannot_post_in_the_group(tg, session_maker):  # noqa: F811
+    async with session_maker() as session:
+        group = await _group(session)
+        test = await _active_test(session_maker, session, title="Yozib bo'lmaydi")
+        group_db_id, test_id = group.id, test.id
+    tg.session.forbidden_chats.add(GROUP_CHAT)
+    await tg(callback_update(ADMIN, AdminCB(s="tst_grp_go", id=test_id, v=str(group_db_id)).pack()))
+    await _wait_background()
+    assert any("yuborib bo'lmadi" in m.text for m in tg.session.sent_to(ADMIN))
+    # After the admin fixes the rights, pressing again continues where it stopped.
+    tg.session.forbidden_chats.clear()
+    tg.session.clear()
+    await tg(callback_update(ADMIN, AdminCB(s="tst_grp_go", id=test_id, v=str(group_db_id)).pack()))
+    await _wait_background()
+    assert len(tg.session.sent_to(GROUP_CHAT)) == 3
+
+
+async def test_member_of_posted_group_sees_test_in_private_list(tg, session_maker):  # noqa: F811
+    async with session_maker() as session:
+        other = await user_service.upsert_user(session, tg_user(ADMIN))
+        target, _ = await group_service.register_group(session, -1001111, "Boshqa guruh", other)
+        group = await _group(session)
+        test = await _active_test(session_maker, session, group_id=target.id, title="Ikki guruh testi")
+        post = await group_tests.ensure_post(session, test, group)  # also posted into GROUP_CHAT
+        assert post.id
+        await make_employee(session, 9402, "Ikkinchi Guruhdagi")
+    tg.session.members_by_chat = {GROUP_CHAT: {9402}, -1001111: set()}  # only in the group it was posted to
+    await tg(message_update(9402, "📝 Mening testlarim", "Ikkinchi"))
+    assert any("Ikki guruh testi" in t for t in tg.session.texts())

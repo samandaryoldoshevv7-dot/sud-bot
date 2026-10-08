@@ -497,7 +497,7 @@ app/
 └── utils/                  # vaqt, matn, structured logging
 migrations/                 # Alembic
 scripts/                    # start.sh, preload_embeddings.py, reembed.py
-tests/                      # pytest (97 test)
+tests/                      # pytest (100 test)
 Dockerfile, railway.json, docker-compose.yml, requirements*.txt, .env.example
 ```
 

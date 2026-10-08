@@ -219,7 +219,7 @@ async def ensure_post(
 async def send_post(bot: Bot, session_maker: async_sessionmaker[AsyncSession], post_id: int) -> bool:
     """Send the header and every question message not sent yet (idempotent, resumable after restart)."""
     if post_id in _sending:
-        return False
+        return True  # already being posted by this process
     _sending.add(post_id)
     try:
         async with session_maker() as session:
@@ -281,19 +281,45 @@ async def send_post(bot: Bot, session_maker: async_sessionmaker[AsyncSession], p
         _sending.discard(post_id)
 
 
-async def start_in_group(bot: Bot, session_maker: async_sessionmaker[AsyncSession], test_id: int) -> int | None:
+async def start_in_group(
+    bot: Bot, session_maker: async_sessionmaker[AsyncSession], test_id: int, group_id: int | None = None
+) -> tuple[int | None, bool]:
+    """Post a test into a group (its own group by default). Returns ``(post_id, fully_posted)``."""
     async with session_maker() as session:
         test = await session.get(Test, test_id)
-        if test is None or test.group_id is None:
-            return None
-        group = await session.get(Group, test.group_id)
+        if test is None:
+            return None, False
+        group = await session.get(Group, group_id or test.group_id) if (group_id or test.group_id) else None
         if group is None or not group.is_active:
             logger.error("Group for test is missing or inactive", extra={"test_id": test_id})
-            return None
+            return None, False
         post = await ensure_post(session, test, group)
         post_id = post.id
-    await send_post(bot, session_maker, post_id)
-    return post_id
+    ok = await send_post(bot, session_maker, post_id)
+    return post_id, ok
+
+
+async def post_to_group_and_report(
+    bot: Bot, session_maker: async_sessionmaker[AsyncSession], test_id: int, group_id: int, admin_chat_id: int
+) -> bool:
+    """Post a test into a group and tell the admin whether it worked (and why not)."""
+    _, ok = await start_in_group(bot, session_maker, test_id, group_id)
+    async with session_maker() as session:
+        group = await session.get(Group, group_id)
+        test = await session.get(Test, test_id)
+        title = esc(test.title) if test else "?"
+        group_title = esc(group.title) if group else "?"
+    key = "gt.admin_posted_ok" if ok else "gt.admin_post_failed"
+    try:
+        await bot.send_message(admin_chat_id, t(key, title=title, group=group_title))
+    except Exception as exc:
+        logger.warning("Could not report group posting to admin", extra={"error": str(exc)[:200]})
+    return ok
+
+
+async def posted_group_ids(session: AsyncSession, test_id: int) -> set[int]:
+    rows = await session.execute(select(GroupTestPost.group_id).where(GroupTestPost.test_id == test_id))
+    return set(rows.scalars().all())
 
 
 # ------------------------------------------------------------------------------ answering

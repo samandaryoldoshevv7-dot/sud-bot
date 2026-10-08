@@ -116,14 +116,25 @@ def compute_percent(correct: int, total: int) -> Decimal:
     return (Decimal(correct) * 100 / Decimal(total)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
 
+async def audience_group_ids(session: AsyncSession, test: Test) -> set[int]:
+    """Groups whose members may take the test: its target group plus every group it was posted to."""
+    from app.models import GroupTestPost
+
+    ids = set((await session.execute(select(GroupTestPost.group_id).where(GroupTestPost.test_id == test.id))).scalars())
+    if test.group_id is not None:
+        ids.add(test.group_id)
+    return ids
+
+
 async def user_in_test_audience(session: AsyncSession, test: Test, user: User) -> bool:
     if test.group_id is None:
         return True
+    group_ids = await audience_group_ids(session, test)
     stmt = (
         select(func.count())
         .select_from(GroupMember)
         .join(Group, Group.id == GroupMember.group_id)
-        .where(GroupMember.group_id == test.group_id, GroupMember.user_id == user.id, GroupMember.is_member.is_(True))
+        .where(GroupMember.group_id.in_(group_ids), GroupMember.user_id == user.id, GroupMember.is_member.is_(True))
     )
     return bool((await session.execute(stmt)).scalar_one())
 
@@ -438,7 +449,11 @@ async def available_tests_for_user(
         .scalars()
         .all()
     )
-    tests = [t for t in tests if t.group_id is None or t.group_id in group_ids]
+    visible = []
+    for test in tests:
+        if test.group_id is None or (await audience_group_ids(session, test)) & group_ids:
+            visible.append(test)
+    tests = visible
     attempts = (
         (
             await session.execute(
