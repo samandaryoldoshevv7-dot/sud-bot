@@ -13,7 +13,7 @@ from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, Message
-from sqlalchemy import distinct, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.ai.base import AIError
@@ -159,7 +159,7 @@ async def on_bad_source(message: Message) -> None:
 
 async def _ask_category(target, session: AsyncSession, state: FSMContext) -> None:
     await state.set_state(MaterialStates.category)
-    result = await session.execute(select(distinct(Material.category)).where(Material.category.is_not(None)).limit(8))
+    result = await session.execute(select(Material.category).where(Material.category.is_not(None)).distinct().limit(8))
     categories = [c for c in result.scalars() if c]
     # Callback data is limited to 64 bytes, so buttons carry an index into the list kept in FSM data.
     await state.update_data(category_options=categories)
@@ -309,6 +309,8 @@ async def _process_and_report(
         )
     else:
         text = t("mat.processed_fail", error=doc_error_text(result.error_code or "internal"))
+        if result.error_code == "internal" and result.error_detail:
+            text += "\n" + t("mat.error_detail", d=esc(result.error_detail[:200]))
     markup = kb([(t("mat.btn.open"), AdminCB(s="mat_v", id=material_id))])
     try:
         await bot.edit_message_text(text, chat_id=chat_id, message_id=message_id, reply_markup=markup)
@@ -426,6 +428,9 @@ async def render_material(target, session: AsyncSession, material_id: int, page:
     if material.status == MaterialStatus.FAILED and material.error_message:
         code = material.error_message.split(":", 1)[0]
         lines += ["", t("mat.detail.error", error=doc_error_text(code))]
+        detail = material.error_message.split(":", 1)[1].strip() if ":" in material.error_message else ""
+        if code == "internal" and detail:
+            lines.append(t("mat.error_detail", d=esc(detail[:200])))
     rows = []
     if material.status == MaterialStatus.READY and material.is_active:
         rows.append([(t("mat.btn.quick_test"), AdminCB(s="mat_qt", id=material.id))])
