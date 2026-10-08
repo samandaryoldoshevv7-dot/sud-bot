@@ -496,3 +496,30 @@ async def test_group_post_records_only_header_and_test_appears_for_group(session
         assert test.id in [m.test.id for m in await attempt_service.my_tests(session, user)]
         start = await attempt_service.start_attempt(session, user, test.id)
         assert start.error is None
+
+
+async def test_material_cut_off_by_restart_is_processed_again(tg, session_maker):  # noqa: F811
+    """A restart during processing used to leave the material "⏳ PROCESSING" forever."""
+    from app.handlers.admin.materials import resume_interrupted_materials
+    from app.models import FileType, Material, MaterialStatus
+    from app.services import materials as material_service
+
+    content = _law("Konstitutsiya").encode()
+    tg.session.files["stuckfile"] = content
+    async with session_maker() as session:
+        await make_employee(session, ADMIN, "Admin Bosh")
+        stuck = await material_service.create_material(
+            session, title="Konstitutsiya", file_type=FileType.TXT, uploaded_by_id=None,
+            file_name="Konstitutsiya.txt", telegram_file_id="stuckfile",
+        )  # fmt: skip
+        stuck.status = MaterialStatus.PROCESSING  # the previous process died here
+        await session.commit()
+        await session.refresh(stuck)
+        stuck_id = stuck.id
+        assert not material_service.is_stale(stuck)  # just started: the admin cannot restart it yet
+        assert material_service.is_stale(stuck, utcnow() + timedelta(minutes=16))
+    assert await resume_interrupted_materials(tg.bot, session_maker) == 1
+    async with session_maker() as session:
+        material = await session.get(Material, stuck_id)
+        assert material.status == MaterialStatus.READY and material.chunk_count > 0
+    assert any("qayta o'qildi va tayyor" in m.text for m in tg.session.sent_to(ADMIN))

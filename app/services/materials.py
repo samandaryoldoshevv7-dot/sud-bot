@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from sqlalchemy import delete, func, select, update
@@ -74,18 +75,36 @@ async def create_material(
     return material
 
 
+# A material still PROCESSING after this long is treated as interrupted (the admin may restart it).
+STALE_PROCESSING = timedelta(minutes=15)
+# Embedding a very large document on a small CPU can take long; after this the material is still
+# usable through full-text search, so processing finishes instead of hanging.
+EMBEDDING_TIMEOUT_SECONDS = 600
+
+
 async def _embed_chunks(session: AsyncSession, chunks: list[SourceChunk], embeddings: EmbeddingProvider) -> bool:
     if not embeddings.available or not chunks:
         return False
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + EMBEDDING_TIMEOUT_SECONDS
     try:
         batch = get_settings().embedding_batch_size * 4
         for start in range(0, len(chunks), batch):
             part = chunks[start : start + batch]
-            vectors = await embeddings.embed_documents([c.text for c in part])
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                raise TimeoutError
+            vectors = await asyncio.wait_for(embeddings.embed_documents([c.text for c in part]), remaining)
             await store_embeddings(
                 session, [(c.id, v) for c, v in zip(part, vectors, strict=True)], embeddings.model_name
             )
         return True
+    except TimeoutError:
+        logger.error(
+            "Embedding took too long; material stays searchable via full-text",
+            extra={"chunks": len(chunks), "timeout": EMBEDDING_TIMEOUT_SECONDS},
+        )
+        return False
     except Exception as exc:
         logger.error("Embedding failed; chunks remain searchable via full-text", extra={"error": str(exc)[:300]})
         return False
@@ -179,6 +198,20 @@ async def process_material(
             await _mark_failed(session, material_id, "internal", str(exc)[:300])
             logger.exception("Material processing crashed", extra={"material_id": material_id})
             return ProcessResult(ok=False, error_code="internal", error_detail=str(exc)[:300])
+
+
+def is_stale(material: Material, now: datetime | None = None) -> bool:
+    """PROCESSING for too long: the worker died (restart, out of memory) — safe to start again."""
+    now = now or utcnow()
+    return material.status == MaterialStatus.PROCESSING and now - material.updated_at > STALE_PROCESSING
+
+
+async def interrupted_material_ids(session: AsyncSession) -> list[int]:
+    """Materials left UPLOADED/PROCESSING by a previous process (called once at startup)."""
+    stmt = select(Material.id).where(
+        Material.status.in_([MaterialStatus.UPLOADED, MaterialStatus.PROCESSING]), Material.is_active.is_(True)
+    )
+    return list((await session.execute(stmt)).scalars().all())
 
 
 async def _mark_failed(session: AsyncSession, material_id: int, code: str, detail: str) -> None:

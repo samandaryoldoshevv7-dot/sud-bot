@@ -147,6 +147,10 @@ async def run() -> None:
             pass
 
     scheduler_task = asyncio.create_task(scheduler_loop(bot, get_session_maker(), stop), name="scheduler")
+    # Files whose processing was cut off by the restart are processed again (admins are told).
+    from app.handlers.admin.materials import resume_interrupted_materials
+
+    background.spawn(resume_interrupted_materials(bot, get_session_maker()), name="resume-materials")
     allowed = dp.resolve_used_update_types()
     if "chat_member" not in allowed:
         allowed.append("chat_member")
