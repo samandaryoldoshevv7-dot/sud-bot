@@ -263,9 +263,13 @@ async def _assemble_and_report(
         except TelegramBadRequest:
             pass
 
-    report = await tb.assemble_questions(
-        session_maker, test_id, make_generator if ai_available() else None, progress, force_generate=force_generate
-    )
+    from app.ai import usage as ai_usage
+    from app.handlers.admin.materials import usage_text
+
+    with ai_usage.track() as spent:
+        report = await tb.assemble_questions(
+            session_maker, test_id, make_generator if ai_available() else None, progress, force_generate=force_generate
+        )
     if report.error == "busy_or_not_draft":
         text = t("tests.assembly_busy")
     else:
@@ -281,6 +285,8 @@ async def _assemble_and_report(
             text += "\n" + t("gen.error_note", error=esc(_friendly_error(report.error)))
         if report.rejected:
             text += "\n" + t("tests.assembly_rejected", n=sum(report.rejected.values()))
+        if spent.requests or spent.cache_hits:
+            text += "\n" + usage_text(spent)
     rows = [
         [(t("tests.btn.open"), AdminCB(s="tst_v", id=test_id))],
         [(t("tests.btn.preview_short"), AdminCB(s="tst_rv", id=test_id, p=1))],

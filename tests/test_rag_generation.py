@@ -72,7 +72,12 @@ async def test_generation_pipeline_stores_grounded_questions(session_maker):
             assert q.validation["verifier_answer"] == q.correct_option
             assert q.topic_id is not None
         assert (await session.execute(select(func.count(Topic.id)))).scalar_one() == 1
-    assert {"generation", "verification", "quality", "topics"} <= set(llm.calls)
+    assert {"generation", "verification", "quality"} <= set(llm.calls)
+    # Topic chosen during generation (no extra request); the two questions of each chunk are
+    # verified and reviewed in one request each.
+    assert "topics" not in llm.calls
+    assert llm.calls.count("verification") == llm.calls.count("generation")
+    assert llm.calls.count("quality") == llm.calls.count("generation")
 
 
 async def test_generation_rejects_when_verifier_disagrees(session_maker):

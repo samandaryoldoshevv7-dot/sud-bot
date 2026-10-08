@@ -190,6 +190,16 @@ class ScriptedLLM(LLMProvider):
             if self.invalid_first and self.calls.count("generation") == 1 and len(messages) == 2:
                 return "this is not json"
             return self._generate(user)
+        if "independent fact checker" in system and "QUESTION 0:" in user:
+            self.calls.append("verification")
+            results = []
+            for index, question in re.findall(r"QUESTION (\d+):\n(.*?)\nOPTIONS:", user, re.S):
+                answer = self._answers.get(question.strip(), "A")
+                if not self.verifier_agrees:
+                    answer = "D" if answer != "D" else "C"
+                results.append({"index": int(index), "answer": answer, "supported": True, "evidence": "x",
+                                "confidence": 0.95})  # fmt: skip
+            return json.dumps({"results": results})
         if "independent fact checker" in system:
             self.calls.append("verification")
             question = user.split("QUESTION:\n", 1)[1].split("\n\nOPTIONS:", 1)[0].strip()
@@ -197,6 +207,12 @@ class ScriptedLLM(LLMProvider):
             if not self.verifier_agrees:
                 answer = "D" if answer != "D" else "C"
             return json.dumps({"answer": answer, "supported": True, "evidence": "x", "confidence": 0.95})
+        if "quality reviewer" in system and "QUESTION 0:" in user:
+            self.calls.append("quality")
+            ok = {"understandable": True, "single_correct": True, "options_meaningful": True, "ambiguous": False,
+                  "explanation_consistent": True, "issues": [], "verdict": "accept"}  # fmt: skip
+            indexes = [int(i) for i in re.findall(r"QUESTION (\d+):", user)]
+            return json.dumps({"results": [{"index": i, **ok} for i in indexes]})
         if "quality reviewer" in system:
             self.calls.append("quality")
             return json.dumps(

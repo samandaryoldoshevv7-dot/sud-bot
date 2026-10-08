@@ -16,12 +16,21 @@ from app.schemas.ai import ExplanationResponse
 
 @pytest.fixture
 async def groq_server(unused_tcp_port_factory=None):
-    state = {"calls": 0, "mode": "ok", "bodies": []}
+    state = {"calls": 0, "mode": "ok", "bodies": [], "headers": {}, "delay": 0.0, "active": 0, "max_active": 0}
 
     async def chat(request):
+        import asyncio
+
         body = await request.json()
         state["calls"] += 1
         state["bodies"].append(body)
+        state["active"] += 1
+        state["max_active"] = max(state["max_active"], state["active"])
+        try:
+            if state["delay"]:
+                await asyncio.sleep(state["delay"])
+        finally:
+            state["active"] -= 1
         if state["mode"] == "auth":
             return web.json_response({"error": {"message": "Invalid API Key"}}, status=401)
         if state["mode"] in ("retired", "all_retired") and (
@@ -55,8 +64,9 @@ async def groq_server(unused_tcp_port_factory=None):
                 "choices": [
                     {"index": 0, "finish_reason": "stop", "message": {"role": "assistant", "content": content}}
                 ],
-                "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
-            }
+                "usage": {"prompt_tokens": 120, "completion_tokens": 30, "total_tokens": 150},
+            },
+            headers=state["headers"],
         )
 
     app = web.Application()
@@ -88,7 +98,7 @@ async def test_json_mode_request_and_parsing(groq_server):
 async def test_rate_limit_is_retried(groq_server, monkeypatch):
     state, url = groq_server
     state["mode"] = "ratelimit"
-    monkeypatch.setattr(groq_provider, "_retry_after_seconds", lambda exc: 0)
+    monkeypatch.setattr(groq_provider, "_retry_after_seconds", lambda exc, attempt=1: 0)
     result = await structured_call(_provider(url, max_retries=0), "Return JSON", "source", ExplanationResponse)
     assert result.supported and state["calls"] == 2
 

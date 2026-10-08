@@ -69,6 +69,7 @@ QUESTION QUALITY REQUIREMENTS:
 - The question must be self-contained and understandable without seeing the source.
 - "explanation": 1-3 sentences explaining WHY the correct option is right, based only on the excerpt.
 - "topic": a short (1-4 words) subject area label, e.g. "Sud ishlarini yuritish", "Protsessual muddatlar".
+  If one of the EXISTING TOPICS listed in the request fits, use it exactly as written.
 - "difficulty": easy = direct recall of a stated fact; medium = understanding/applying a rule;
   hard = combining conditions or distinguishing close cases (still fully supported by the source).
 
@@ -104,6 +105,7 @@ def question_generation_user(
     difficulties: Sequence[str],
     focus: str | None = None,
     avoid_questions: Sequence[str] = (),
+    existing_topics: Sequence[str] = (),
 ) -> str:
     letters = ", ".join("ABCDE"[:option_count])
     lines = [
@@ -117,7 +119,9 @@ def question_generation_user(
         lines.append(f"Focus on this subject if the source supports it: {focus}")
     if avoid_questions:
         lines.append("Do NOT repeat or rephrase these existing questions:")
-        lines.extend(f"- {q}" for q in avoid_questions[:15])
+        lines.extend(f"- {q[:150]}" for q in avoid_questions[:10])
+    if existing_topics:
+        lines.append("EXISTING TOPICS: " + json.dumps(list(existing_topics)[:40], ensure_ascii=False))
     lines.append("\nSOURCE MATERIAL:\n" + render_context(chunks))
     return "\n".join(lines)
 
@@ -144,6 +148,32 @@ OUTPUT JSON SCHEMA:
 def source_verification_user(source_text: str, question: str, options: dict[str, str]) -> str:
     rendered = "\n".join(f"{k}) {v}" for k, v in options.items())
     return f"SOURCE PASSAGE:\n<source>\n{source_text}\n</source>\n\nQUESTION:\n{question}\n\nOPTIONS:\n{rendered}"
+
+
+SOURCE_VERIFICATION_BATCH_SYSTEM = f"""\
+You are an independent fact checker. You receive ONE source passage and several multiple-choice
+questions WITHOUT answer keys. Answer EACH question independently using ONLY the source passage.
+
+{GROUNDING_RULES}
+
+Rules for every question:
+- If the source explicitly supports exactly one option, return its letter in "answer",
+  "supported": true, and quote the supporting sentence(s) VERBATIM in "evidence".
+- If the source does not contain the information, or more than one option could be correct,
+  return "answer": null and "supported": false.
+- "confidence" (0.0-1.0): how sure you are that the chosen option is the only one supported.
+
+OUTPUT JSON SCHEMA (one result per question, same "index"):
+{{"results": [{{"index": integer, "answer": "A" | "B" | "C" | "D" | "E" | null, "supported": boolean,
+  "evidence": string, "confidence": number}}]}}"""
+
+
+def source_verification_batch_user(source_text: str, questions: Sequence[tuple[str, dict[str, str]]]) -> str:
+    parts = [f"SOURCE PASSAGE:\n<source>\n{source_text}\n</source>"]
+    for index, (question, options) in enumerate(questions):
+        rendered = "\n".join(f"{k}) {v}" for k, v in options.items())
+        parts.append(f"QUESTION {index}:\n{question}\nOPTIONS:\n{rendered}")
+    return "\n\n".join(parts)
 
 
 # ----------------------------------------------------------------------------- quality validation
@@ -180,6 +210,39 @@ def question_validation_user(
     )
 
 
+QUESTION_VALIDATION_BATCH_SYSTEM = f"""\
+You are a strict exam quality reviewer for court employee training.
+Review EACH multiple-choice question independently against ITS OWN source excerpt.
+
+{GROUNDING_RULES}
+
+Check every item of every question:
+- understandable: the question is clear, grammatical and self-contained.
+- single_correct: exactly one option is correct according to the excerpt; the marked answer is it.
+- options_meaningful: all options are meaningful, distinct, plausible, no "all/none of the above".
+- ambiguous: true if the wording allows more than one reasonable interpretation or answer.
+- explanation_consistent: the explanation agrees with the excerpt and the marked answer.
+"verdict": "accept" only if understandable, single_correct and options_meaningful are true and
+ambiguous is false. List concrete problems in "issues".
+
+OUTPUT JSON SCHEMA (one result per question, same "index"):
+{{"results": [{{"index": integer, "understandable": boolean, "single_correct": boolean,
+  "options_meaningful": boolean, "ambiguous": boolean, "explanation_consistent": boolean,
+  "issues": [string], "verdict": "accept" | "reject"}}]}}"""
+
+
+def question_validation_batch_user(items: Sequence[tuple[str, str, dict[str, str], str, str]]) -> str:
+    """``items``: (excerpt, question, options, marked correct letter, explanation)."""
+    parts = []
+    for index, (excerpt, question, options, correct, explanation) in enumerate(items):
+        rendered = "\n".join(f"{k}) {v}" for k, v in options.items())
+        parts.append(
+            f"QUESTION {index}:\nSOURCE EXCERPT:\n<source>\n{excerpt}\n</source>\n{question}\nOPTIONS:\n{rendered}\n"
+            f"MARKED CORRECT ANSWER: {correct}\nEXPLANATION: {explanation}"
+        )
+    return "\n\n".join(parts)
+
+
 # ----------------------------------------------------------------------------- explanation
 
 EXPLANATION_SYSTEM = f"""\
@@ -199,29 +262,4 @@ def explanation_user(source_text: str, question: str, options: dict[str, str], c
     return (
         f"SOURCE PASSAGE:\n<source>\n{source_text}\n</source>\n\n"
         f"QUESTION:\n{question}\n\nOPTIONS:\n{rendered}\n\nMARKED CORRECT ANSWER: {correct}"
-    )
-
-
-# ----------------------------------------------------------------------------- topics
-
-TOPIC_CLASSIFICATION_SYSTEM = f"""\
-You classify exam questions for court employees into subject-area topics.
-
-{GROUNDING_RULES}
-
-For each question choose the best matching topic from EXISTING TOPICS. Create a new short topic
-(1-4 words, same language as the question) ONLY when none of the existing topics fits.
-Keep topics broad enough to group related questions (e.g. "Protsessual muddatlar", "Sud etikasi").
-
-OUTPUT JSON SCHEMA:
-{{"topics": [{{"index": integer, "topic": string}}]}}"""
-
-
-def topic_classification_user(existing_topics: Sequence[str], questions: Sequence[tuple[str, str]]) -> str:
-    payload = [{"index": i, "question": q, "suggested_topic": t} for i, (q, t) in enumerate(questions)]
-    return (
-        "EXISTING TOPICS:\n"
-        + json.dumps(list(existing_topics)[:200], ensure_ascii=False)
-        + "\n\nQUESTIONS:\n"
-        + json.dumps(payload, ensure_ascii=False)
     )
