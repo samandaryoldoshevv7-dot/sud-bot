@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import tempfile
@@ -339,33 +340,60 @@ async def download_material(bot: Bot, material: Material) -> Path | None:
     return path
 
 
-async def resume_interrupted_materials(bot: Bot, session_maker: async_sessionmaker[AsyncSession]) -> int:
-    """At startup: finish materials whose processing was cut off by a restart and tell the admins."""
+RESUME_DELAY_SECONDS = 30
+
+
+async def resume_interrupted_materials(
+    bot: Bot, session_maker: async_sessionmaker[AsyncSession], delay: float = RESUME_DELAY_SECONDS
+) -> int:
+    """At startup: finish materials whose processing was cut off by a restart and tell the admins.
+
+    Each material is retried only ONCE: a marker row is stored before processing and removed after
+    it. If the bot dies again while processing the same file (e.g. the file is too big for the
+    server's memory), the next start finds the marker and marks the material FAILED instead of
+    crashing the bot in a loop.
+    """
+    from sqlalchemy import delete as sql_delete
+    from sqlalchemy.dialects.postgresql import insert
+
+    from app.models import BotSetting
     from app.services.notifications import notify_admins
 
+    await asyncio.sleep(delay)  # let the bot answer users first
     async with session_maker() as session:
         ids = await material_service.interrupted_material_ids(session)
     for material_id in ids:
+        marker = f"material_resume:{material_id}"
+        open_kb = kb([(t("mat.btn.open"), AdminCB(s="mat_v", id=material_id))])
         async with session_maker() as session:
             material = await session.get(Material, material_id)
             if material is None:
                 continue
             title = material.title
+            if await session.get(BotSetting, marker) is not None:
+                await session.execute(sql_delete(BotSetting).where(BotSetting.key == marker))
+                await material_service._mark_failed(session, material_id, "crashed", "")
+                await notify_admins(bot, t("mat.resume_crashed", title=esc(title)), open_kb)
+                logger.error("Material crashed the bot twice; marked failed", extra={"material_id": material_id})
+                continue
+            await session.execute(insert(BotSetting).values(key=marker, value=1).on_conflict_do_nothing())
+            await session.commit()
             path = await download_material(bot, material)
             if path is None and material.file_type != FileType.TEXT:
                 await material_service._mark_failed(session, material_id, "download_failed", "")
-                await notify_admins(bot, t("mat.resume_failed", title=esc(title)),
-                                    kb([(t("mat.btn.open"), AdminCB(s="mat_v", id=material_id))]))  # fmt: skip
+                await session.execute(sql_delete(BotSetting).where(BotSetting.key == marker))
+                await session.commit()
+                await notify_admins(bot, t("mat.resume_failed", title=esc(title)), open_kb)
                 continue
         try:
             result = await material_service.process_material(session_maker, material_id, path)
         finally:
             if path is not None:
                 path.unlink(missing_ok=True)
-        key = "mat.resumed_ok" if result.ok else "mat.resume_failed"
-        await notify_admins(
-            bot, t(key, title=esc(title)), kb([(t("mat.btn.open"), AdminCB(s="mat_v", id=material_id))])
-        )
+            async with session_maker() as session:
+                await session.execute(sql_delete(BotSetting).where(BotSetting.key == marker))
+                await session.commit()
+        await notify_admins(bot, t("mat.resumed_ok" if result.ok else "mat.resume_failed", title=esc(title)), open_kb)
         logger.info("Interrupted material processed again", extra={"material_id": material_id, "ok": result.ok})
     return len(ids)
 

@@ -518,8 +518,30 @@ async def test_material_cut_off_by_restart_is_processed_again(tg, session_maker)
         stuck_id = stuck.id
         assert not material_service.is_stale(stuck)  # just started: the admin cannot restart it yet
         assert material_service.is_stale(stuck, utcnow() + timedelta(minutes=16))
-    assert await resume_interrupted_materials(tg.bot, session_maker) == 1
+    assert await resume_interrupted_materials(tg.bot, session_maker, delay=0) == 1
     async with session_maker() as session:
         material = await session.get(Material, stuck_id)
         assert material.status == MaterialStatus.READY and material.chunk_count > 0
     assert any("qayta o'qildi va tayyor" in m.text for m in tg.session.sent_to(ADMIN))
+
+
+async def test_material_that_crashes_the_bot_again_is_not_retried_forever(tg, session_maker):  # noqa: F811
+    from app.handlers.admin.materials import resume_interrupted_materials
+    from app.models import BotSetting, FileType, Material, MaterialStatus
+    from app.services import materials as material_service
+
+    async with session_maker() as session:
+        await make_employee(session, ADMIN, "Admin Bosh")
+        big = await material_service.create_material(
+            session, title="Juda katta", file_type=FileType.TXT, uploaded_by_id=None, telegram_file_id="bigfile"
+        )
+        big.status = MaterialStatus.PROCESSING
+        session.add(BotSetting(key=f"material_resume:{big.id}", value=1))  # the retry after a crash also died
+        await session.commit()
+        big_id = big.id
+    assert await resume_interrupted_materials(tg.bot, session_maker, delay=0) == 1
+    async with session_maker() as session:
+        material = await session.get(Material, big_id)
+        assert material.status == MaterialStatus.FAILED and material.error_message.startswith("crashed")
+        assert await session.get(BotSetting, f"material_resume:{big_id}") is None
+    assert any("ikki marta ishdan chiqdi" in m.text for m in tg.session.sent_to(ADMIN))

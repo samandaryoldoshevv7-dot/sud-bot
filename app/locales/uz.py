@@ -440,6 +440,7 @@ TEXTS: dict[str, str] = {
     "mat.already_processing": "Material hozir qayta ishlanmoqda. Agar 15 daqiqadan ko'p tursa, «🔄 Qayta ishlash» ni qayta bosing.",
     "mat.detail.processing_hint": "⏳ Fayl o'qilmoqda. Odatda bir necha daqiqa oladi; 15 daqiqadan ko'p tursa, «🔄 Qayta ishlash» tugmasi chiqadi.",
     "mat.resumed_ok": "✅ «{title}» materiali bot qayta ishga tushgani sabab to'xtab qolgan edi — qayta o'qildi va tayyor.",
+    "mat.resume_crashed": "❌ «{title}» faylini o'qish paytida bot ikki marta ishdan chiqdi — fayl server uchun juda katta bo'lishi mumkin. Material ❌ deb belgilandi. Faylni kichikroq qismlarga (masalan, 50–100 sahifadan) bo'lib yuklang.",
     "mat.resume_failed": "❌ «{title}» materialini qayta o'qib bo'lmadi. Material sahifasida sababini ko'ring yoki faylni qayta yuklang.",
     "mat.not_ready": "Material hali tayyor emas.",
     "mat.pasted_text": "Kiritilgan matn",
@@ -468,6 +469,7 @@ TEXTS: dict[str, str] = {
     "doc_error.download_failed": "Faylni Telegramdan yuklab olib bo'lmadi. Qayta urinib ko'ring.",
     "doc_error.not_found": "Material topilmadi.",
     "doc_error.internal": "Ichki xatolik. Batafsil ma'lumot server loglarida.",
+    "doc_error.crashed": "Faylni o'qish paytida bot ishdan chiqdi (fayl server xotirasi uchun juda katta bo'lishi mumkin). Faylni kichikroq qismlarga bo'lib yuklang.",
     # ------------------------------------------------------------------ generation
     "gen.started": "🧠 «{title}» asosida {n} ta savol yaratilmoqda. Har bir savol manba bilan tekshiriladi, bu bir necha daqiqa olishi mumkin...",
     "gen.progress": "🧠 Savollar yaratilmoqda va tekshirilmoqda: {done}/{total}",
