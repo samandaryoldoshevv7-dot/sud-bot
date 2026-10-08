@@ -9,6 +9,7 @@ from app.locales import t
 
 def admin_main_kb() -> InlineKeyboardMarkup:
     return kb(
+        [(t("menu.create_test"), AdminCB(s="ct")), (t("menu.results"), AdminCB(s="res"))],
         [(t("menu.employees"), AdminCB(s="emp")), (t("menu.materials"), AdminCB(s="mat"))],
         [(t("menu.news"), AdminCB(s="news")), (t("menu.tests"), AdminCB(s="tst"))],
         [(t("menu.questions"), AdminCB(s="qb")), (t("menu.statistics"), AdminCB(s="st"))],

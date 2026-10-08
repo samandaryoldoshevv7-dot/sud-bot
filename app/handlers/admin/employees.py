@@ -24,7 +24,7 @@ from app.utils.time import fmt_dt, fmt_duration
 
 router = Router(name="admin_employees")
 
-STATUS_ICON = {UserStatus.ACTIVE: "🟢", UserStatus.PENDING: "🟡", UserStatus.INACTIVE: "🔴"}
+STATUS_ICON = {UserStatus.ACTIVE: "🟢", UserStatus.PENDING: "🟡", UserStatus.INACTIVE: "🗑", UserStatus.BLOCKED: "⛔️"}
 
 
 class EmployeeStates(StatesGroup):
@@ -42,6 +42,7 @@ async def cb_section(callback: CallbackQuery, session: AsyncSession, state: FSMC
         active=counts["active"],
         pending=counts["pending"],
         inactive=counts["inactive"],
+        blocked=counts["blocked"],
     )
     await show(
         callback,
@@ -53,9 +54,12 @@ async def cb_section(callback: CallbackQuery, session: AsyncSession, state: FSMC
             ],
             [
                 (t("emp_admin.btn.pending", n=counts["pending"]), AdminCB(s="emp_l", v="pending")),
-                (t("emp_admin.btn.inactive"), AdminCB(s="emp_l", v="inactive")),
+                (t("emp_admin.btn.inactive", n=counts["inactive"]), AdminCB(s="emp_l", v="inactive")),
             ],
-            [(t("emp_admin.btn.search"), AdminCB(s="emp_srch"))],
+            [
+                (t("emp_admin.btn.blocked"), AdminCB(s="emp_l", v="blocked")),
+                (t("emp_admin.btn.search"), AdminCB(s="emp_srch")),
+            ],
             back_menu_row("menu"),
         ),
     )
@@ -158,16 +162,33 @@ async def render_profile(target, session: AsyncSession, user_id: int, back: str 
     ]
     if user.role == UserRole.EMPLOYEE:
         if user.status == UserStatus.ACTIVE:
-            rows.append([(t("emp_admin.btn.deactivate"), AdminCB(s="emp_deact", id=user.id))])
+            rows.append(
+                [
+                    (t("emp_admin.btn.block"), AdminCB(s="emp_blk", id=user.id)),
+                    (t("emp_admin.btn.remove"), AdminCB(s="emp_rm", id=user.id, v=back)),
+                ]
+            )
+        elif user.status == UserStatus.BLOCKED:
+            rows.append(
+                [
+                    (t("emp_admin.btn.unblock"), AdminCB(s="emp_appr", id=user.id)),
+                    (t("emp_admin.btn.remove"), AdminCB(s="emp_rm", id=user.id, v=back)),
+                ]
+            )
         elif user.status == UserStatus.PENDING:
             rows.append(
                 [
                     (t("emp_admin.btn.approve"), AdminCB(s="emp_appr", id=user.id)),
-                    (t("emp_admin.btn.reject"), AdminCB(s="emp_deact", id=user.id)),
+                    (t("emp_admin.btn.reject"), AdminCB(s="emp_rm", id=user.id, v=back)),
                 ]
             )
         else:
-            rows.append([(t("emp_admin.btn.activate"), AdminCB(s="emp_appr", id=user.id))])
+            rows.append(
+                [
+                    (t("emp_admin.btn.restore"), AdminCB(s="emp_appr", id=user.id)),
+                    (t("emp_admin.btn.erase"), AdminCB(s="emp_er", id=user.id)),
+                ]
+            )
     rows.append(back_menu_row("emp_l", v=back))
     await show(target, "\n".join(lines), kb(*rows))
 
@@ -177,9 +198,11 @@ async def cb_profile(callback: CallbackQuery, callback_data: AdminCB, session: A
     await render_profile(callback, session, callback_data.id, callback_data.v or "all")
 
 
-@router.callback_query(AdminCB.filter(F.s.in_({"emp_appr", "emp_deact"})))
+@router.callback_query(AdminCB.filter(F.s.in_({"emp_appr", "emp_deact", "emp_blk"})))
 async def cb_set_status(callback: CallbackQuery, callback_data: AdminCB, session: AsyncSession, bot: Bot) -> None:
-    status = UserStatus.ACTIVE if callback_data.s == "emp_appr" else UserStatus.INACTIVE
+    status = {"emp_appr": UserStatus.ACTIVE, "emp_deact": UserStatus.INACTIVE, "emp_blk": UserStatus.BLOCKED}[
+        callback_data.s
+    ]
     user = await session.get(User, callback_data.id)
     if user is None:
         await callback.answer(t("common.not_found"), show_alert=True)
@@ -191,7 +214,10 @@ async def cb_set_status(callback: CallbackQuery, callback_data: AdminCB, session
     await user_service.set_status(session, user.id, status)
     await callback.answer(t("emp_admin.status_changed"))
     if previous != status and user.has_private_chat:
-        key = "emp_admin.notify_activated" if status == UserStatus.ACTIVE else "emp_admin.notify_deactivated"
+        key = {
+            UserStatus.ACTIVE: "emp_admin.notify_activated",
+            UserStatus.BLOCKED: "emp_admin.notify_blocked",
+        }.get(status, "emp_admin.notify_deactivated")
         await safe_send(bot, user.telegram_id, t(key))
         if status == UserStatus.ACTIVE:
             from app.handlers.test_listing import available_tests_view
@@ -201,6 +227,75 @@ async def cb_set_status(callback: CallbackQuery, callback_data: AdminCB, session
             if view is not None:
                 await safe_send(bot, user.telegram_id, view[0], view[1])
     await render_profile(callback, session, user.id)
+
+
+@router.callback_query(AdminCB.filter(F.s == "emp_rm"))
+async def cb_remove_confirm(callback: CallbackQuery, callback_data: AdminCB, session: AsyncSession) -> None:
+    user = await session.get(User, callback_data.id)
+    if user is None:
+        await callback.answer(t("common.not_found"), show_alert=True)
+        return
+    await show(
+        callback,
+        t("emp_admin.remove_confirm", name=esc(user.display_name)),
+        kb(
+            [(t("emp_admin.btn.remove_yes"), AdminCB(s="emp_rm_go", id=user.id, v=callback_data.v))],
+            [(t("btn.cancel"), AdminCB(s="emp_v", id=user.id, v=callback_data.v))],
+        ),
+    )
+
+
+@router.callback_query(AdminCB.filter(F.s == "emp_rm_go"))
+async def cb_remove(callback: CallbackQuery, callback_data: AdminCB, session: AsyncSession, bot: Bot) -> None:
+    """Remove an employee: access is revoked and they disappear from every list (results are kept)."""
+    user = await session.get(User, callback_data.id)
+    if user is None:
+        await callback.answer(t("common.not_found"), show_alert=True)
+        return
+    if user.role == UserRole.ADMIN:
+        await callback.answer(t("emp_admin.admin_immutable"), show_alert=True)
+        return
+    name, telegram_id, notify = user.display_name, user.telegram_id, user.has_private_chat
+    was_active = user.status != UserStatus.INACTIVE
+    await user_service.set_status(session, user.id, UserStatus.INACTIVE)
+    await callback.answer(t("emp_admin.removed", name=truncate(name, 60)), show_alert=True)
+    if was_active and notify:
+        await safe_send(bot, telegram_id, t("emp_admin.notify_deactivated"))
+    back = callback_data.v if callback_data.v in ("all", "active", "pending") else "all"
+    await _render_list(callback, session, back, 0)
+
+
+@router.callback_query(AdminCB.filter(F.s == "emp_er"))
+async def cb_erase_confirm(callback: CallbackQuery, callback_data: AdminCB, session: AsyncSession) -> None:
+    user = await session.get(User, callback_data.id)
+    if user is None:
+        await callback.answer(t("common.not_found"), show_alert=True)
+        return
+    await show(
+        callback,
+        t("emp_admin.erase_confirm", name=esc(user.display_name)),
+        kb(
+            [(t("emp_admin.btn.erase_yes"), AdminCB(s="emp_er_go", id=user.id))],
+            [(t("btn.cancel"), AdminCB(s="emp_v", id=user.id, v="inactive"))],
+        ),
+    )
+
+
+@router.callback_query(AdminCB.filter(F.s == "emp_er_go"))
+async def cb_erase(callback: CallbackQuery, callback_data: AdminCB, session: AsyncSession) -> None:
+    user = await session.get(User, callback_data.id)
+    if user is None:
+        await callback.answer(t("common.not_found"), show_alert=True)
+        return
+    if user.status != UserStatus.INACTIVE:  # only already removed employees can be erased
+        await callback.answer(t("emp_admin.erase_only_removed"), show_alert=True)
+        return
+    name = user.display_name
+    if not await user_service.delete_permanently(session, user.id):
+        await callback.answer(t("emp_admin.admin_immutable"), show_alert=True)
+        return
+    await callback.answer(t("emp_admin.erased", name=truncate(name, 60)), show_alert=True)
+    await _render_list(callback, session, "inactive", 0)
 
 
 @router.callback_query(AdminCB.filter(F.s == "emp_name"))

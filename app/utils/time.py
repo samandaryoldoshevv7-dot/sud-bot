@@ -68,6 +68,23 @@ def fmt_duration(seconds: int | float | None) -> str:
     return f"{secs} son"
 
 
+def fmt_span(seconds: int | float | None) -> str:
+    """Human time span in minutes precision: "2 soat 17 daqiqa", "1 kun 3 soat"."""
+    if seconds is None:
+        return "—"
+    minutes = max(0, int(seconds) // 60)
+    days, minutes = divmod(minutes, 24 * 60)
+    hours, minutes = divmod(minutes, 60)
+    parts = []
+    if days:
+        parts.append(f"{days} kun")
+    if hours:
+        parts.append(f"{hours} soat")
+    if minutes and not days:
+        parts.append(f"{minutes} daqiqa")
+    return " ".join(parts) or "1 daqiqadan kam"
+
+
 def fmt_hours(hours: float) -> str:
     if hours >= 24 and hours % 24 == 0:
         return f"{int(hours // 24)} kun" if hours != 24 else "24 soat"

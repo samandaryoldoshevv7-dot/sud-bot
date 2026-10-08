@@ -95,24 +95,39 @@ async def cmd_start(
     payload = (command.args or "").strip()
     if payload.startswith("test_"):
         await state.update_data(pending_test=payload.removeprefix("test_"))
+    elif payload.startswith("run_"):  # ▶️ TESTNI BOSHLASH pressed in a group
+        await state.update_data(pending_test=payload.removeprefix("run_"), pending_run=True)
 
     if is_admin:
         await show_home(message, user, is_admin)
-        await _open_pending_test(message, state, session, user)
+        await _open_pending_test(message, state, session, user, bot)
         return
 
-    if user.status == UserStatus.INACTIVE:
+    if user.status in (UserStatus.INACTIVE, UserStatus.BLOCKED):
         await message.answer(t("start.inactive"), reply_markup=ReplyKeyboardRemove())
         return
-    if not user.full_name:
-        await state.set_state(Registration.full_name)
-        await message.answer(t("register.ask_name"), reply_markup=ReplyKeyboardRemove())
-        return
-    if user.status == UserStatus.PENDING and not await try_auto_approve(bot, session, user):
-        await message.answer(t("register.pending"))
-        return
+    if user.status == UserStatus.PENDING and await settings_service.get_value(session, "auto_approve_all"):
+        # Automatic activation: the employee is stored and gets access immediately (the admin can
+        # still block or deactivate them at any time).
+        await user_service.set_status(session, user.id, UserStatus.ACTIVE)
+        await session.refresh(user)
+        await check_group_membership(bot, session, user)
+        await notify_admins(
+            bot,
+            t("admin.new_employee_auto", name=user_line(user), tg_id=user.telegram_id),
+            kb([(t("emp_admin.btn.profile"), AdminCB(s="emp_v", id=user.id))]),
+        )
+        logger.info("Employee activated automatically", extra={"user_id": user.id})
+    if user.status == UserStatus.PENDING:
+        if not user.full_name:
+            await state.set_state(Registration.full_name)
+            await message.answer(t("register.ask_name"), reply_markup=ReplyKeyboardRemove())
+            return
+        if not await try_auto_approve(bot, session, user):
+            await message.answer(t("register.pending"))
+            return
     await _home_with_tests(message, state, session, bot, user, is_admin)
-    await _open_pending_test(message, state, session, user)
+    await _open_pending_test(message, state, session, user, bot)
 
 
 async def _home_with_tests(
@@ -126,14 +141,24 @@ async def _home_with_tests(
         await show_home(message, user, is_admin, bot, session)
 
 
-async def _open_pending_test(message: Message, state: FSMContext, session: AsyncSession, user: User) -> None:
+async def _open_pending_test(
+    message: Message, state: FSMContext, session: AsyncSession, user: User, bot: Bot | None = None
+) -> None:
     data = await state.get_data()
     pending = str(data.get("pending_test", ""))
-    await state.update_data(pending_test=None)
-    if pending.isdigit():
-        from app.handlers.employee import send_test_card
+    run = bool(data.get("pending_run"))
+    await state.update_data(pending_test=None, pending_run=None)
+    if not pending.isdigit():
+        return
+    from app.handlers.employee import START_ERRORS, open_test_in_private, send_test_card
 
-        await send_test_card(message, session, user, int(pending))
+    if run and bot is not None:
+        # Coming from the group button: continue right away with this employee's own attempt.
+        error, _ = await open_test_in_private(bot, message.chat.id, session, user, int(pending))
+        if error is None:
+            return
+        await message.answer(t(START_ERRORS[error]))
+    await send_test_card(message, session, user, int(pending))
 
 
 @router.message(Registration.full_name, F.text)
@@ -153,7 +178,7 @@ async def registration_name(
     if await try_auto_approve(bot, session, user):
         await message.answer(t("register.approved"))
         await _home_with_tests(message, state, session, bot, user, is_admin)
-        await _open_pending_test(message, state, session, user)
+        await _open_pending_test(message, state, session, user, bot)
         return
     await message.answer(t("register.pending"))
     await notify_admins(
@@ -226,7 +251,7 @@ async def unknown_message(message: Message, user: User | None, is_admin: bool) -
     if user.status == UserStatus.ACTIVE or is_admin:
         await message.answer(t("common.unknown_input"), reply_markup=employee_reply_kb(is_admin))
     elif user.status == UserStatus.PENDING:
-        await message.answer(t("register.pending"))
+        await message.answer(t("register.pending") if user.full_name else t("start.press_start"))
     else:
         await message.answer(t("start.inactive"))
 

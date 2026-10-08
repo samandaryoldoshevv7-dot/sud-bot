@@ -594,11 +594,9 @@ async def cb_quick_test_target(callback: CallbackQuery, callback_data: AdminCB, 
 async def cb_quick_test_create(
     callback: CallbackQuery, callback_data: AdminCB, session: AsyncSession, session_maker, bot: Bot, user: User
 ) -> None:
-    from datetime import timedelta
-
     from app.handlers.admin.tests import start_assembly
     from app.models import AnswerReveal, DeliveryMode, TestDifficulty
-    from app.services.test_builder import TestDraftData, create_test
+    from app.services.test_builder import OPEN_WINDOW, TestDraftData, create_test
     from app.utils.time import utcnow
 
     material = await session.get(Material, callback_data.id)
@@ -614,12 +612,12 @@ async def cb_quick_test_create(
             title=material.title[:200],
             question_count=int(count_s),
             starts_at=now,
-            deadline_at=now + timedelta(hours=24),
+            deadline_at=now + OPEN_WINDOW,
             difficulty=TestDifficulty.MIXED,
             material_ids=[material.id],
             randomize_questions=True,
             randomize_options=True,
-            answer_reveal=AnswerReveal.AFTER_COMPLETION.value,
+            answer_reveal=AnswerReveal.IMMEDIATE.value,
             passing_percent=60,
             group_id=group_id,
             delivery_mode=DeliveryMode.GROUP if group_id else DeliveryMode.PRIVATE,

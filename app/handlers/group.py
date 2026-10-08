@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.keyboards.callbacks import AdminCB, GroupAnsCB, GroupStartCB
 from app.keyboards.common import kb
 from app.locales import t
+from app.models import AnswerReveal
 from app.services import group_tests
 from app.services import groups as group_service
 from app.services.group_tests import GroupAnswerCode
@@ -167,15 +168,21 @@ async def member_left(event: ChatMemberUpdated, session: AsyncSession) -> None:
 
 
 @router.callback_query(GroupStartCB.filter())
-async def cb_group_start(callback: CallbackQuery, callback_data: GroupStartCB, session: AsyncSession) -> None:
+async def cb_group_start(callback: CallbackQuery, callback_data: GroupStartCB, session: AsyncSession, bot: Bot) -> None:
+    """▶️ TESTNI BOSHLASH in the group: the employee is identified ONLY by callback.from_user, gets
+    their own attempt (personal timer starts now) and the bot's private chat opens with the test."""
     code, attempt = await group_tests.group_start(session, callback.from_user, callback_data.p)
     if code == GroupAnswerCode.ACCEPTED and attempt is not None:
-        text = t("gt.alert.started", done=attempt.answered_count, total=attempt.total_questions)
-    elif code == GroupAnswerCode.DUPLICATE:
-        text = t("gt.alert.already_finished")
-    else:
-        text = t(f"gt.alert.{code.value}")
-    await callback.answer(text, show_alert=True)
+        legacy = await group_tests.post_has_questions(session, callback_data.p)
+        if legacy:  # old post with the questions in the group itself
+            text = t("gt.alert.started", done=attempt.answered_count, total=attempt.total_questions)
+            await callback.answer(text, show_alert=True)
+            return
+        # Telegram opens the bot chat with /start run_<id>; the question is shown there.
+        await callback.answer(url=await deep_link(bot, f"run_{attempt.test_id}"))
+        return
+    duplicate = code == GroupAnswerCode.DUPLICATE
+    await callback.answer(t("gt.alert.already_finished") if duplicate else t(f"gt.alert.{code.value}"), show_alert=True)
 
 
 @router.callback_query(GroupAnsCB.filter())
@@ -183,8 +190,23 @@ async def cb_group_answer(callback: CallbackQuery, callback_data: GroupAnsCB, se
     # Identity comes ONLY from Telegram (callback.from_user), never from callback data.
     result = await group_tests.submit_group_answer(session, callback.from_user, callback_data.m, callback_data.o)
     await callback.answer(group_tests.answer_alert(result), show_alert=True)
-    if result.code == GroupAnswerCode.ACCEPTED and result.finished and result.attempt is not None:
+    if result.code != GroupAnswerCode.ACCEPTED:
+        return
+    if result.private_chat and result.reveal == AnswerReveal.IMMEDIATE and result.question is not None:
+        await _send_answer_card(bot, session, callback.from_user.id, result)
+    if result.finished and result.attempt is not None:
         await _send_private_result(bot, session, callback.from_user.id, result)
+
+
+async def _send_answer_card(bot: Bot, session: AsyncSession, telegram_id: int, result) -> None:
+    """Legacy in-group questions: the full answer window is sent to the private chat."""
+    from app.handlers.formatting import answer_result_text
+    from app.services.notifications import safe_send
+
+    text = answer_result_text(
+        result.question, result.opts or [], result.position, result.total, result.selected, AnswerReveal.IMMEDIATE
+    )
+    await safe_send(bot, telegram_id, text)
 
 
 async def _send_private_result(bot: Bot, session: AsyncSession, telegram_id: int, result) -> None:
@@ -202,4 +224,8 @@ async def _send_private_result(bot: Bot, session: AsyncSession, telegram_id: int
     markup = None
     if attempt.incorrect_count:
         markup = kb([(t("emp.btn.corrections"), EmpCB(a="corr", id=attempt.id))])
-    await safe_send(bot, telegram_id, result_text(test, attempt), markup)
+    from app.statistics.sources import attempt_source_breakdown
+
+    await safe_send(
+        bot, telegram_id, result_text(test, attempt, user, await attempt_source_breakdown(session, attempt.id)), markup
+    )

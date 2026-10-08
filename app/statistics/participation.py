@@ -16,13 +16,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import (
     AttemptStatus,
-    GroupMember,
     ParticipationStatus,
     Test,
     TestAttempt,
     User,
     UserRole,
-    UserStatus,
 )
 
 _PRIORITY = {
@@ -101,12 +99,9 @@ def best_attempt(attempts: list[TestAttempt]) -> TestAttempt | None:
 
 
 async def audience(session: AsyncSession, test: Test) -> list[User]:
-    stmt = select(User).where(User.role == UserRole.EMPLOYEE, User.status == UserStatus.ACTIVE)
-    if test.group_id is not None:
-        stmt = stmt.join(GroupMember, GroupMember.user_id == User.id).where(
-            GroupMember.group_id == test.group_id, GroupMember.is_member.is_(True)
-        )
-    return list((await session.execute(stmt)).scalars().all())
+    from app.services.assignments import audience_users
+
+    return await audience_users(session, test)
 
 
 async def participation(session: AsyncSession, test: Test, now: datetime | None = None) -> ParticipationSummary:

@@ -62,7 +62,44 @@ async def test_non_admin_cannot_open_admin_panel(tg, session):
     assert not any("XODIMLAR" in t for t in s.texts())
 
 
+async def test_new_employee_is_activated_automatically(tg, session_maker):
+    s = await tg(message_update(3200, "/start"))
+    async with session_maker() as session:
+        user = (await session.execute(select(User).where(User.telegram_id == 3200))).scalar_one()
+        assert user.status == UserStatus.ACTIVE  # no manual approval needed
+    texts = "\n".join(s.texts())
+    assert "avtomatik faollashtirildi" in texts  # the admin is informed (and can block)
+    markup = s.last_markup()
+    assert markup is not None
+    # The employee menu (📚 Testlarim) is available right away.
+    from aiogram.methods import SendMessage
+
+    reply_kbs = [m.reply_markup for m in s.requests if isinstance(m, SendMessage) and int(m.chat_id) == 3200]
+    assert any(
+        getattr(k, "keyboard", None) and any(b.text == "📚 Testlarim" for row in k.keyboard for b in row)
+        for k in reply_kbs
+    )
+    # The admin can still block the employee; a blocked employee has no access.
+    s.clear()
+    await tg(callback_update(ADMIN, AdminCB(s="emp_blk", id=user.id).pack()))
+    async with session_maker() as session:
+        assert (await session.get(User, user.id)).status == UserStatus.BLOCKED
+    s.clear()
+    await tg(message_update(3200, "/start"))
+    assert any("cheklangan" in t for t in s.texts())
+    async with session_maker() as session:
+        assert (await session.get(User, user.id)).status == UserStatus.BLOCKED  # /start does not unblock
+    s.clear()
+    await tg(callback_update(ADMIN, AdminCB(s="emp_appr", id=user.id).pack()))  # ✅ Blokdan chiqarish
+    async with session_maker() as session:
+        assert (await session.get(User, user.id)).status == UserStatus.ACTIVE
+
+
 async def test_employee_registration_flow(tg, session_maker):
+    # Manual approval mode (automatic activation switched off in ⚙️ Sozlamalar).
+    async with session_maker() as session:
+        await settings_service.set_value(session, "auto_approve_all", False)
+        await settings_service.set_value(session, "auto_approve_group_members", False)
     s = await tg(message_update(3000, "/start"))
     assert any("Ro'yxatdan o'tish" in t for t in s.texts())
     s.clear()
@@ -82,14 +119,6 @@ async def test_employee_registration_flow(tg, session_maker):
     async with session_maker() as session:
         assert (await session.get(User, uid)).status == UserStatus.ACTIVE
     assert any("faollashtirildi" in t for t in s.texts())
-
-
-async def test_auto_approve_all_setting(tg, session_maker):
-    async with session_maker() as session:
-        await settings_service.set_value(session, "auto_approve_all", True)
-    await tg(message_update(3100, "/start"))
-    s = await tg(message_update(3100, "Karimova Dilnoza"))
-    assert any("muvaffaqiyatli" in t for t in s.texts())
 
 
 async def test_admin_menu_sections_render(tg, session_maker):
@@ -119,7 +148,7 @@ async def test_employee_takes_test_via_buttons(tg, session_maker):
     assert any("Sud amaliyoti" in t for t in s.texts())
     s.clear()
     await tg(callback_update(4000, EmpCB(a="start", id=test_id).pack()))
-    assert any("Savol <b>1/2</b>" in t for t in s.texts())
+    assert any("<b>[1/2]</b>" in t and "📚 Manba:" in t and "○ <b>A)</b>" in t for t in s.texts())
     # Double click on START does not create a second attempt.
     await tg(callback_update(4000, EmpCB(a="start", id=test_id).pack()))
     async with session_maker() as session:
@@ -135,8 +164,13 @@ async def test_employee_takes_test_via_buttons(tg, session_maker):
     for pos, letter in enumerate(letters):
         s.clear()
         await tg(callback_update(4000, AnsCB(at=attempt.id, pos=pos, o=letter).pack()))
+        result = next(t for t in s.texts() if "Sizning javobingiz:" in t)
+        assert "JAVOB QABUL QILINDI" in result and "Barakalla" not in result  # reveal mode "after"
+        assert [b.text for row in s.last_markup().inline_keyboard for b in row] == ["✖️ CHIQISH"]
+        s.clear()
+        await tg(callback_update(4000, EmpCB(a="next", id=attempt.id).pack()))  # ✖️ CHIQISH
     assert any("TEST YAKUNLANDI" in t for t in s.texts())
-    assert any("2/2" in t for t in s.texts())
+    assert any("✅ To'g'ri: 2" in t and "100%" in t for t in s.texts())
     # Pressing an old answer button again is harmless.
     s.clear()
     await tg(callback_update(4000, AnsCB(at=attempt.id, pos=0, o=letters[0]).pack()))
@@ -173,7 +207,7 @@ async def test_admin_test_wizard_creates_draft(tg, session_maker):
     await tg(callback_update(ADMIN, WizCB(f="audience", v="0").pack()))
     await tg(callback_update(ADMIN, WizCB(f="start", v="now").pack()))
     for f, v in (
-        ("duration", "24"),
+        ("duration", "86400"),
         ("rand_q", "1"),
         ("rand_o", "1"),
         ("reveal", "after"),
@@ -209,3 +243,62 @@ async def test_deep_link_unknown_test_is_safe(tg, session_maker, payload):
     s = await tg(message_update(5000, payload))
     assert s.texts()
     assert not any("Kutilmagan xatolik" in t for t in s.texts())
+
+
+async def test_private_answer_shows_verdict_and_full_explanation(tg, session_maker):
+    from app.models import TestQuestion
+
+    async with session_maker() as session:
+        mid = await make_material_with_text(session_maker)
+        await make_question(session, text_="Apellyatsiya shikoyati qancha muddatda beriladi?", material_id=mid,
+                            correct="B")  # fmt: skip
+        test = await make_test(session, question_count=1, answer_reveal="immediate")
+        await tb.assemble_questions(session_maker, test.id, None)
+        await tb.mark_ready(session, test.id)
+        await tb.publish(session, test.id)
+        await make_employee(session, 4100, "Izoh Oluvchi")
+        test_id = test.id
+    s = await tg(callback_update(4100, EmpCB(a="start", id=test_id).pack()))
+    async with session_maker() as session:
+        attempt = (await session.execute(select(TestAttempt).where(TestAttempt.test_id == test_id))).scalar_one()
+        item = attempt.layout[0]
+        tq = await session.get(TestQuestion, item["tq"])
+        correct = original_to_display(item, tq.correct_option)
+        explanation = tq.explanation
+    wrong = next(x for x in "ABCD" if x != correct)
+    s.clear()
+    await tg(callback_update(4100, AnsCB(at=attempt.id, pos=0, o=wrong).pack()))
+    card = next(t for t in s.texts() if "NOTO'G'RI JAVOB" in t)
+    assert explanation in card and "<b>[1/1]</b>" in card and "📚 Manba: Yo'riqnoma" in card
+    assert f"Sizning javobingiz:\n{wrong})" in card and f"✅ <b>TO'G'RI JAVOB:</b>\n{correct})" in card
+
+
+async def test_admin_removes_and_erases_employee(tg, session_maker):
+    async with session_maker() as session:
+        emp = await make_employee(session, 4200, "Ketadigan Xodim")
+        await make_employee(session, 4201, "Qoladigan Xodim")
+        emp_id = emp.id
+    s = await tg(callback_update(ADMIN, AdminCB(s="emp_v", id=emp_id, v="all").pack()))
+    buttons = [b.text for row in s.last_markup().inline_keyboard for b in row]
+    assert "🗑 Xodimni o'chirish" in buttons and not any("Kirishni" in b for b in buttons)
+    s.clear()
+    await tg(callback_update(ADMIN, AdminCB(s="emp_rm", id=emp_id, v="all").pack()))
+    assert any("o'chirilsinmi" in t for t in s.texts())
+    s.clear()
+    await tg(callback_update(ADMIN, AdminCB(s="emp_rm_go", id=emp_id, v="all").pack()))
+    assert any("ro'yxatdan o'chirildi" in a for a in s.alerts())
+    page = "\n".join(s.texts()) + str(s.last_markup())
+    assert "Ketadigan" not in page and "Qoladigan" in page  # gone from the employee list
+    assert any("huquqingiz o'chirildi" in t for t in (m.text for m in s.sent_to(4200)))
+    # The removed employee cannot take tests any more.
+    async with session_maker() as session:
+        assert (await session.get(User, emp_id)).status == UserStatus.INACTIVE
+    # Permanent deletion from the archive.
+    s.clear()
+    await tg(callback_update(ADMIN, AdminCB(s="emp_l", v="inactive").pack()))
+    assert "Ketadigan" in str(s.last_markup())
+    s.clear()
+    await tg(callback_update(ADMIN, AdminCB(s="emp_er_go", id=emp_id).pack()))
+    assert any("butunlay o'chirildi" in a for a in s.alerts())
+    async with session_maker() as session:
+        assert await session.get(User, emp_id) is None

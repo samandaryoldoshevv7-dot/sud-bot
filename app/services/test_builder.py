@@ -6,27 +6,32 @@ import logging
 import random
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from sqlalchemy import case, delete, func, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.ai.base import AIError
 from app.models import (
+    DEFAULT_DURATION,
+    DURATION_CHOICES,
     AttemptStatus,
     DeliveryMode,
     GenerationStatus,
     Material,
     MaterialStatus,
+    News,
     Question,
     QuestionOption,
     QuestionStatus,
     SourceKind,
     Test,
     TestAttempt,
+    TestAudience,
     TestDifficulty,
     TestMaterial,
     TestQuestion,
+    TestSource,
     TestStatus,
     Topic,
 )
@@ -41,6 +46,9 @@ logger = logging.getLogger(__name__)
 
 PAGE_SIZE = 8
 RECENT_TESTS_TO_AVOID = 2
+# Tests without a fixed end stay open until the admin ends them; each employee still has only
+# ``duration_seconds`` from the moment they press START.
+OPEN_WINDOW = timedelta(days=365)
 
 
 class TestStateError(Exception):
@@ -72,6 +80,8 @@ class TestDraftData:
     allow_retakes: bool = False
     passing_percent: int = 60
     delivery_mode: DeliveryMode = DeliveryMode.PRIVATE
+    duration_seconds: int = DEFAULT_DURATION
+    audience: TestAudience | None = None  # derived from group_id when not given
 
 
 async def create_test(session: AsyncSession, data: TestDraftData, created_by_id: int | None) -> Test:
@@ -79,6 +89,9 @@ async def create_test(session: AsyncSession, data: TestDraftData, created_by_id:
 
     if data.deadline_at <= data.starts_at:
         raise TestStateError("deadline_before_start")
+    if data.duration_seconds not in DURATION_CHOICES and data.duration_seconds <= 0:
+        raise TestStateError("bad_duration")
+    audience = data.audience or (TestAudience.GROUP if data.group_id else TestAudience.ALL)
     test = Test(
         title=data.title.strip()[:255],
         description=(data.description or "").strip() or None,
@@ -97,6 +110,8 @@ async def create_test(session: AsyncSession, data: TestDraftData, created_by_id:
         allow_retakes=False,
         passing_percent=data.passing_percent,
         delivery_mode=data.delivery_mode,
+        duration_seconds=data.duration_seconds,
+        audience=audience,
         status=TestStatus.DRAFT,
         created_by_id=created_by_id,
     )
@@ -104,6 +119,10 @@ async def create_test(session: AsyncSession, data: TestDraftData, created_by_id:
     await session.flush()
     for mid in sorted(set(data.material_ids)):
         session.add(TestMaterial(test_id=test.id, material_id=mid))
+    for position, mid in enumerate(data.material_ids):
+        material = await session.get(Material, mid)
+        if material is not None:
+            await ensure_source(session, test.id, material, position)
     await session.commit()
     logger.info("Test created", extra={"test_id": test.id, "questions": test.question_count})
     return test
@@ -126,8 +145,56 @@ def make_snapshot_options(
     return relabelled, LETTERS[letters.index(correct)]
 
 
+async def ensure_source(
+    session: AsyncSession, test_id: int, material: Material, position: int | None = None
+) -> TestSource:
+    """The test's source row for a material (file name, Telegram file id, display name)."""
+    existing = (
+        await session.execute(
+            select(TestSource).where(TestSource.test_id == test_id, TestSource.material_id == material.id)
+        )
+    ).scalar_one_or_none()
+    if existing is not None:
+        return existing
+    if position is None:
+        position = (
+            await session.execute(select(func.count(TestSource.id)).where(TestSource.test_id == test_id))
+        ).scalar_one()
+    source = TestSource(
+        test_id=test_id,
+        material_id=material.id,
+        source_name=material.title[:255],
+        original_file_name=material.file_name,
+        file_id=material.telegram_file_id,
+        position=position,
+    )
+    session.add(source)
+    await session.flush()
+    return source
+
+
+async def source_for_question(session: AsyncSession, test_id: int, question: Question) -> tuple[TestSource | None, str]:
+    """``(test source, display name)`` of a bank question; name is empty when it cannot be determined."""
+    if question.source_material_id:
+        material = await session.get(Material, question.source_material_id)
+        if material is not None:
+            source = await ensure_source(session, test_id, material)
+            return source, source.source_name
+    if question.source_news_id:
+        news = await session.get(News, question.source_news_id)
+        if news is not None:
+            return None, news.title[:255]
+    return None, ""
+
+
 def snapshot_question(
-    test: Test, question: Question, position: int, rng: random.Random, topic_name: str = ""
+    test: Test,
+    question: Question,
+    position: int,
+    rng: random.Random,
+    topic_name: str = "",
+    source: TestSource | None = None,
+    source_name: str = "",
 ) -> TestQuestion:
     options, correct = make_snapshot_options(question.options, question.correct_option, test.option_count, rng)
     return TestQuestion(
@@ -145,6 +212,9 @@ def snapshot_question(
         source_kind=question.source_kind,
         source_reference=question.source_reference,
         source_excerpt=question.source_excerpt,
+        source_id=source.id if source else None,
+        source_name=source_name or (source.source_name if source else ""),
+        source_file=source.original_file_name if source else None,
         is_approved=question.status == QuestionStatus.APPROVED,
         option_rows=[
             QuestionOption(letter=letter, text=text_, is_correct=letter == correct) for letter, text_ in options.items()
@@ -371,8 +441,13 @@ async def _assemble(
         for q in questions:
             if q.id in used_ids:
                 continue
+            source, source_name = await source_for_question(session, test.id, q)
+            if not source_name:
+                # Every question must name the document it came from; never add one without it.
+                report.rejected["no_source"] = report.rejected.get("no_source", 0) + 1
+                continue
             used_ids.add(q.id)
-            tq = snapshot_question(test, q, next_position, rng, names.get(q.topic_id or 0, ""))
+            tq = snapshot_question(test, q, next_position, rng, names.get(q.topic_id or 0, ""), source, source_name)
             next_position += 1
             session.add(tq)
             added.append(tq)
@@ -698,16 +773,87 @@ async def extend_deadline(
 
 
 async def delete_test(session: AsyncSession, test_id: int) -> None:
+    """Delete a test with its questions, attempts and answers (the admin confirms this first)."""
     test = await session.get(Test, test_id)
     if test is None:
         raise TestStateError("not_found")
-    attempts = (
-        await session.execute(select(func.count(TestAttempt.id)).where(TestAttempt.test_id == test_id))
-    ).scalar_one()
-    if attempts or test.status not in (TestStatus.DRAFT, TestStatus.READY) or test.published_at is not None:
-        raise TestStateError("cannot_delete")
+    if test.generation_status == GenerationStatus.RUNNING:
+        raise TestStateError("generation_running")
+    session.expunge(test)
     await session.execute(delete(Test).where(Test.id == test_id))
     await session.commit()
+    logger.info("Test deleted", extra={"test_id": test_id})
+
+
+async def set_duration(session: AsyncSession, test_id: int, seconds: int, now: datetime | None = None) -> int:
+    """Change the personal time limit. Running attempts get ``started_at + new duration`` when that
+    is still in the future; returns how many running attempts were adjusted."""
+    now = now or utcnow()
+    if seconds not in DURATION_CHOICES:
+        raise TestStateError("bad_duration")
+    test = await session.get(Test, test_id)
+    if test is None:
+        raise TestStateError("not_found")
+    test.duration_seconds = seconds
+    running = list(
+        (
+            await session.execute(
+                select(TestAttempt)
+                .where(TestAttempt.test_id == test_id, TestAttempt.status == AttemptStatus.IN_PROGRESS)
+                .with_for_update(of=TestAttempt)
+            )
+        ).scalars()
+    )
+    adjusted = 0
+    for attempt in running:
+        new_deadline = attempt.started_at + timedelta(seconds=seconds)
+        if new_deadline > now and new_deadline != attempt.deadline_at:
+            attempt.deadline_at = new_deadline
+            adjusted += 1
+            if test.deadline_at < new_deadline:
+                test.deadline_at = new_deadline
+    await session.commit()
+    logger.info("Test duration changed", extra={"test_id": test_id, "seconds": seconds, "adjusted": adjusted})
+    return adjusted
+
+
+async def set_paused(session: AsyncSession, test_id: int, paused: bool) -> Test:
+    test = await session.get(Test, test_id)
+    if test is None:
+        raise TestStateError("not_found")
+    if test.status != TestStatus.ACTIVE:
+        raise TestStateError("not_active")
+    test.paused = paused
+    await session.commit()
+    return test
+
+
+async def reopen_test(session: AsyncSession, test_id: int, now: datetime | None = None) -> Test:
+    """EXPIRED/CLOSED → ACTIVE again (employees who have not finished can start or be given time)."""
+    from app.models import GroupTestPost
+
+    now = now or utcnow()
+    test = await session.get(Test, test_id)
+    if test is None:
+        raise TestStateError("not_found")
+    if test.status not in (TestStatus.EXPIRED, TestStatus.CLOSED):
+        raise TestStateError("cannot_reopen")
+    test.status = TestStatus.ACTIVE
+    test.paused = False
+    test.ended_at = None
+    test.summary_sent_at = None
+    test.reminder_sent_at = None
+    test.activated_at = test.activated_at or now
+    test.deadline_at = max(test.deadline_at, now + OPEN_WINDOW)
+    # Group posts are shown again (the header with ▶️ TESTNI BOSHLASH is re-sent).
+    await session.execute(
+        update(GroupTestPost)
+        .where(GroupTestPost.test_id == test_id)
+        .values(finalized_at=None, header_message_id=None, posted_all=False)
+    )
+    await session.commit()
+    logger.info("Test reopened", extra={"test_id": test_id})
+    return test
 
 
 async def list_tests(session: AsyncSession, page: int, status: TestStatus | None = None) -> tuple[list[Test], int]:
@@ -729,6 +875,13 @@ async def test_material_titles(session: AsyncSession, test: Test) -> list[str]:
         .order_by(Material.title)
     )
     return list((await session.execute(stmt)).scalars().all())
+
+
+async def source_names(session: AsyncSession, test_id: int) -> list[str]:
+    rows = await session.execute(
+        select(TestSource.source_name).where(TestSource.test_id == test_id).order_by(TestSource.position, TestSource.id)
+    )
+    return list(rows.scalars().all())
 
 
 async def reset_stuck_generation(session: AsyncSession) -> int:

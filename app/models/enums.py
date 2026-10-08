@@ -13,7 +13,8 @@ class UserRole(str, enum.Enum):
 class UserStatus(str, enum.Enum):
     PENDING = "pending"  # registered, waiting for admin approval
     ACTIVE = "active"
-    INACTIVE = "inactive"  # deactivated by admin (no access)
+    INACTIVE = "inactive"  # deactivated (removed) by admin: hidden from lists, no access
+    BLOCKED = "blocked"  # blocked by admin: stays in the lists, no access
 
 
 class MaterialStatus(str, enum.Enum):
@@ -105,3 +106,22 @@ class DeliveryMode(str, enum.Enum):
 
     GROUP = "group"
     PRIVATE = "private"
+
+
+class TestAudience(str, enum.Enum):
+    """Who receives a test: every active employee, members of a group, or chosen employees."""
+
+    __test__ = False
+    ALL = "all"
+    GROUP = "group"
+    USERS = "users"
+
+
+class AssignmentStatus(str, enum.Enum):
+    ASSIGNED = "assigned"
+    REMOVED = "removed"  # admin took the test away from this employee
+
+
+# Test durations the admin may choose (per employee, counted from the moment they press START).
+DURATION_CHOICES = (6 * 3600, 12 * 3600, 24 * 3600, 48 * 3600)
+DEFAULT_DURATION = 24 * 3600

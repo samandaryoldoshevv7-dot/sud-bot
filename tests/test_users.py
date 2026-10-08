@@ -44,7 +44,7 @@ async def test_employee_listing_and_search(session):
     users, total = await user_service.list_employees(session, UserFilter(query="13"), 0)
     assert total == 1
     counts = await user_service.employee_counts(session)
-    assert counts == {"pending": 1, "active": 2, "inactive": 0, "total": 3}
+    assert counts == {"pending": 1, "active": 2, "inactive": 0, "blocked": 0, "total": 3}
 
 
 async def test_group_registration_and_membership(session):

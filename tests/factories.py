@@ -95,12 +95,18 @@ async def make_question(
     return q
 
 
-async def make_material_with_text(session_maker, text: str = LAW_TEXT, embeddings: EmbeddingProvider | None = None):
+async def make_material_with_text(
+    session_maker,
+    text: str = LAW_TEXT,
+    embeddings: EmbeddingProvider | None = None,
+    title: str = "Yo'riqnoma",
+    file_name: str | None = None,
+):
     from app.services import materials as material_service
 
     async with session_maker() as session:
         material = await material_service.create_material(
-            session, title="Yo'riqnoma", file_type=FileType.TEXT, uploaded_by_id=None, raw_text=text
+            session, title=title, file_type=FileType.TEXT, uploaded_by_id=None, raw_text=text, file_name=file_name
         )
     result = await material_service.process_material(session_maker, material.id, None, embeddings or HashEmbeddings())
     assert result.ok, result
@@ -157,7 +163,14 @@ class ScriptedLLM(LLMProvider):
 
     name = "scripted"
 
-    def __init__(self, verifier_agrees: bool = True, invalid_first: bool = False, bad_excerpt: bool = False):
+    def __init__(
+        self,
+        verifier_agrees: bool = True,
+        invalid_first: bool = False,
+        bad_excerpt: bool = False,
+        wrong_source: bool = False,
+    ):
+        self.wrong_source = wrong_source
         self.verifier_agrees = verifier_agrees
         self.invalid_first = invalid_first
         self.bad_excerpt = bad_excerpt
@@ -209,7 +222,11 @@ class ScriptedLLM(LLMProvider):
     def _generate(self, user: str) -> str:
         count = int(re.search(r"Write (\d+) multiple-choice", user).group(1))
         n_opts = int(re.search(r"exactly (\d) options", user).group(1))
-        chunk_id, chunk_text = re.search(r'<chunk id="(\d+)"[^>]*>\n(.*?)\n</chunk>', user, re.S).groups()
+        chunk_id, attrs, chunk_text = re.search(r'<chunk id="(\d+)"([^>]*)>\n(.*?)\n</chunk>', user, re.S).groups()
+        source = re.search(r'source="([^"]*)"', attrs).group(1)
+        source_file = re.search(r'source_file="([^"]*)"', attrs).group(1)
+        if self.wrong_source:
+            source, source_file = "Boshqa hujjat", "boshqa.pdf"
         sentences = [
             s.strip() for s in re.split(r"(?<=[.!?])\s+", chunk_text.replace("\n", " ")) if len(s.strip()) > 30
         ]
@@ -234,6 +251,8 @@ class ScriptedLLM(LLMProvider):
                     "source_chunk_id": int(chunk_id),
                     "source_reference": "ref",
                     "source_excerpt": excerpt,
+                    "source": source,
+                    "source_file": source_file,
                 }
             )
         return json.dumps({"status": "ok", "questions": questions, "rejection_reason": None}, ensure_ascii=False)

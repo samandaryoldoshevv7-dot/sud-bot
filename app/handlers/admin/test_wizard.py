@@ -15,11 +15,11 @@ from app.handlers.admin.common import show
 from app.keyboards.callbacks import AdminCB, WizCB
 from app.keyboards.common import Button, kb
 from app.locales import t
-from app.models import DeliveryMode, TestDifficulty, User
+from app.models import DURATION_CHOICES, DeliveryMode, TestDifficulty, User
 from app.services import groups as group_service
 from app.services import materials as material_service
 from app.services.ai_runtime import ai_available
-from app.services.test_builder import TestDraftData, TestStateError, create_test
+from app.services.test_builder import OPEN_WINDOW, TestDraftData, TestStateError, create_test
 from app.utils.text import esc, truncate
 from app.utils.time import fmt_dt, fmt_hours, parse_local_datetime, utcnow
 
@@ -44,7 +44,7 @@ STEPS = [
     "passing",
     "confirm",
 ]
-TEXT_STEPS = {"title", "description", "count", "news", "focus", "start", "duration", "passing"}
+TEXT_STEPS = {"title", "description", "count", "news", "focus", "start", "passing"}
 MAX_MATERIAL_BUTTONS = 20
 
 
@@ -129,12 +129,8 @@ async def _prompt(target, state: FSMContext, session: AsyncSession, step: str) -
     elif step == "duration":
         await show(
             target,
-            header + t("wiz.duration"),
-            kb(
-                [(fmt_hours(h), WizCB(f=step, v=str(h))) for h in (12, 24, 48)],
-                [(fmt_hours(h), WizCB(f=step, v=str(h))) for h in (72, 168)],
-                _nav(step),
-            ),
+            header + t("ct.ask_duration"),
+            kb(*[[(fmt_hours(sec / 3600), WizCB(f=step, v=str(sec)))] for sec in DURATION_CHOICES], _nav(step)),
         )
     elif step in ("rand_q", "rand_o"):
         await show(target, header + t(f"wiz.{step}"), _yes_no(step))
@@ -166,7 +162,6 @@ async def _prompt(target, state: FSMContext, session: AsyncSession, step: str) -
 async def _summary(session: AsyncSession, wiz: dict) -> str:
     starts = parse_local_datetime(wiz["start_local"]) if wiz.get("start_local") else utcnow()
     assert starts is not None
-    deadline = starts + timedelta(hours=float(wiz["duration_hours"]))
     if wiz.get("use_all"):
         sources = t("wiz.all_materials")
     else:
@@ -191,8 +186,7 @@ async def _summary(session: AsyncSession, wiz: dict) -> str:
         focus=esc(wiz.get("focus") or "—"),
         audience=audience,
         start=fmt_dt(starts),
-        deadline=fmt_dt(deadline),
-        duration=fmt_hours(float(wiz["duration_hours"])),
+        duration=fmt_hours(int(wiz["duration_seconds"]) / 3600),
         rand_q=yn[bool(wiz.get("rand_q"))],
         rand_o=yn[bool(wiz.get("rand_o"))],
         reveal=t(f"reveal.{wiz['reveal']}"),
@@ -275,23 +269,6 @@ async def on_text(message: Message, state: FSMContext, session: AsyncSession) ->
             await message.answer(t("wiz.err.past"))
             return
         await _set(state, start_local=value)
-    elif step == "duration":
-        parsed = parse_local_datetime(value)
-        wiz = data.get("wiz", {})
-        start = parse_local_datetime(wiz["start_local"]) if wiz.get("start_local") else utcnow()
-        assert start is not None
-        if parsed is not None:
-            hours = (parsed - start).total_seconds() / 3600
-        else:
-            try:
-                hours = float(value.replace(",", "."))
-            except ValueError:
-                await message.answer(t("wiz.err.duration"))
-                return
-        if not 0.25 <= hours <= 24 * 60:
-            await message.answer(t("wiz.err.duration"))
-            return
-        await _set(state, duration_hours=round(hours, 2))
     elif step == "passing":
         value = value.rstrip("%").strip()
         if not value.isdigit() or not 0 <= int(value) <= 100:
@@ -366,7 +343,10 @@ async def cb_choice(
     elif step == "start":
         await _set(state, start_local=None)
     elif step == "duration":
-        await _set(state, duration_hours=float(value))
+        if int(value) not in DURATION_CHOICES:
+            await callback.answer(t("test_error.bad_duration"), show_alert=True)
+            return
+        await _set(state, duration_seconds=int(value))
     elif step in ("rand_q", "rand_o"):
         await _set(state, **{step: value == "1"})
     elif step == "reveal":
@@ -402,7 +382,8 @@ async def _create(
         focus_query=wiz.get("focus"),
         group_id=wiz.get("group_id"),
         starts_at=starts,
-        deadline_at=starts + timedelta(hours=float(wiz["duration_hours"])),
+        deadline_at=starts + OPEN_WINDOW,
+        duration_seconds=int(wiz["duration_seconds"]),
         randomize_questions=bool(wiz.get("rand_q")),
         randomize_options=bool(wiz.get("rand_o")),
         answer_reveal=wiz.get("reveal", "after"),

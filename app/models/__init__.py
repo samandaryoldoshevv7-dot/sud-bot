@@ -1,7 +1,10 @@
 """ORM models. Importing this package registers every table on ``Base.metadata``."""
 
 from app.models.enums import (
+    DEFAULT_DURATION,
+    DURATION_CHOICES,
     AnswerReveal,
+    AssignmentStatus,
     AttemptStatus,
     DeliveryMode,
     Difficulty,
@@ -12,6 +15,7 @@ from app.models.enums import (
     QuestionOrigin,
     QuestionStatus,
     SourceKind,
+    TestAudience,
     TestDifficulty,
     TestStatus,
     UserRole,
@@ -25,15 +29,20 @@ from app.models.test import (
     GroupTestPost,
     QuestionOption,
     Test,
+    TestAssignment,
     TestAttempt,
     TestMaterial,
     TestQuestion,
+    TestSource,
     UserAnswer,
 )
 from app.models.user import Group, GroupMember, User
 
 __all__ = [
+    "DEFAULT_DURATION",
+    "DURATION_CHOICES",
     "AnswerReveal",
+    "AssignmentStatus",
     "AttemptStatus",
     "BotSetting",
     "DeliveryMode",
@@ -55,10 +64,13 @@ __all__ = [
     "SourceChunk",
     "SourceKind",
     "Test",
+    "TestAssignment",
     "TestAttempt",
+    "TestAudience",
     "TestDifficulty",
     "TestMaterial",
     "TestQuestion",
+    "TestSource",
     "TestStatus",
     "Topic",
     "User",

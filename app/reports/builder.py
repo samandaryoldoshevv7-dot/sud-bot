@@ -239,7 +239,7 @@ async def build_test_report_xlsx(session: AsyncSession, test_id: int) -> tuple[b
                 f"{ans.selected_option}) {tq.options.get(ans.selected_option, '')}",
                 f"{tq.correct_option}) {tq.options.get(tq.correct_option, '')}",
                 tq.topic_name,
-                tq.source_reference,
+                tq.source_name or tq.source_reference,
                 tq.explanation,
                 _naive_local(ans.answered_at),
             ]
@@ -249,7 +249,7 @@ async def build_test_report_xlsx(session: AsyncSession, test_id: int) -> tuple[b
 
     ws = wb.create_sheet("Barcha javoblar")
     ws.append(["Xodim", "Telegram ID", "Savol №", "Savol", "Tanlagan (ko'rgan harfi)", "Tanlagan variant",
-               "To'g'ri (ko'rgan harfi)", "To'g'ri variant", "Natija", "Vaqt"])  # fmt: skip
+               "To'g'ri (ko'rgan harfi)", "To'g'ri variant", "Natija", "Vaqt", "Manba", "Manba fayli"])  # fmt: skip
     rows = await session.execute(
         select(UserAnswer, TestQuestion, User)
         .join(TestQuestion, TestQuestion.id == UserAnswer.test_question_id)
@@ -262,6 +262,7 @@ async def build_test_report_xlsx(session: AsyncSession, test_id: int) -> tuple[b
             user.display_name, user.telegram_id, ans.position + 1, tq.question_text, ans.selected_display,
             tq.options.get(ans.selected_option, ""), ans.correct_display or ans.correct_option,
             tq.options.get(tq.correct_option, ""), "To'g'ri" if ans.is_correct else "Xato", _naive_local(ans.answered_at),
+            tq.source_name, tq.source_file or "",
         ])  # fmt: skip
     _date_format(ws, [10])
     _style_sheet(ws, {4: 60, 6: 40, 8: 40})
@@ -278,10 +279,20 @@ async def build_test_report_xlsx(session: AsyncSession, test_id: int) -> tuple[b
                 row.answers,
                 row.correct,
                 row.percent if row.answers else None,
-                row.question.source_reference,
+                row.question.source_name or row.question.source_reference,
             ]
         )
     _style_sheet(ws, {2: 70, 8: 40})
+
+    from app.statistics.sources import test_source_breakdown
+
+    ws = wb.create_sheet("Manba bo'yicha")
+    ws.append(["Manba", "Javoblar", "To'g'ri", "To'g'ri %"])
+    for src in await test_source_breakdown(session, test_id):
+        ws.append(
+            [src.name, src.answered, src.correct, round(src.correct / src.answered * 100, 1) if src.answered else None]
+        )
+    _style_sheet(ws, {1: 40})
 
     buf = io.BytesIO()
     wb.save(buf)

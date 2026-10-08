@@ -25,12 +25,21 @@ class ContextChunk:
     chunk_id: int
     reference: str
     text: str
+    source: str = ""
+    source_file: str = ""
+
+
+def _attr(value: str) -> str:
+    return value.replace('"', "'").replace("\n", " ")
 
 
 def render_context(chunks: Sequence[ContextChunk]) -> str:
     parts = []
     for chunk in chunks:
-        parts.append(f'<chunk id="{chunk.chunk_id}" reference="{chunk.reference}">\n{chunk.text}\n</chunk>')
+        parts.append(
+            f'<chunk id="{chunk.chunk_id}" reference="{_attr(chunk.reference)}" source="{_attr(chunk.source)}" '
+            f'source_file="{_attr(chunk.source_file)}">\n{chunk.text}\n</chunk>'
+        )
     return "\n\n".join(parts)
 
 
@@ -47,6 +56,9 @@ QUESTION QUALITY REQUIREMENTS:
 - "source_excerpt" MUST be copied VERBATIM (character for character) from that chunk: 1-3 full
   sentences that prove the correct answer. Do not paraphrase, shorten words or fix typos.
 - "source_chunk_id" MUST be the id of the chunk the excerpt was copied from.
+- "source" and "source_file" are MANDATORY: copy them EXACTLY from the "source" and "source_file"
+  attributes of that same chunk. Never invent, translate or change a document name, and never
+  attribute a question to a different document than the one its excerpt comes from.
 - Exactly ONE option is correct according to the excerpt; every other option must be clearly
   wrong according to the source, yet plausible to an unprepared reader.
 - All options must be meaningful, distinct, of similar length and style. No duplicates.
@@ -74,7 +86,9 @@ OUTPUT JSON SCHEMA:
       "difficulty": "easy" | "medium" | "hard",
       "source_chunk_id": integer,
       "source_reference": string,
-      "source_excerpt": string
+      "source_excerpt": string,
+      "source": string,
+      "source_file": string
     }}
   ]
 }}

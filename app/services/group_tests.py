@@ -1,20 +1,24 @@
-"""Tests that run INSIDE a Telegram group.
+"""Tests started from a Telegram group.
 
-Design (chosen for reliability and exact per-user accounting):
-* The bot posts a header message with ▶️ TESTNI BOSHLASH and then one shared message per question.
-  Each question message shows the full option texts and only ``A`` ``B`` ``C`` ``D`` buttons.
+Design (chosen for privacy and exact per-user accounting):
+* The bot posts ONE header message ("📚 YANGI TEST", questions, time) with ▶️ TESTNI BOSHLASH.
+  Pressing it identifies the employee by ``callback.from_user.id``, creates THEIR OWN attempt (their
+  personal timer starts) and opens the bot's private chat, where the questions are answered — so
+  other group members never see anybody's answers.
+* Legacy posts created before this design also have one shared message per question with ``A``
+  ``B`` ``C`` ``D`` buttons; those keep working until the test ends.
 * Native Telegram polls are NOT used: they cannot enforce "first answer is final", hide the correct
   answer per user, or be tied to our attempts. Custom inline keyboards are handled server-side.
 * The answering user is ALWAYS ``callback.from_user`` (callback data only carries the message id and
   the letter), so nobody can answer on behalf of someone else.
 * One answer per (user, test, question) is enforced by a unique constraint plus a row lock on the
-  attempt; answers are immutable (DB trigger). Feedback is shown in a private callback alert, so other
-  group members never see someone else's answer.
+  attempt; answers are immutable (DB trigger). Feedback is private: a short callback alert (correct /
+  wrong) plus, in the bot's private chat, the full answer card with the "why" explanation. Other group
+  members never see someone else's answer, and nothing in the group looks like a vote count.
 * Every employee has their own attempt row; nothing is kept in process memory, so hundreds of people
   can answer at the same time.
-* Question message counters ("👥 Javob berdi: N") are refreshed by a background loop with throttling
-  (Telegram limits edits per group). When the test ends, each message is turned into a poll-like
-  final result (distribution per option, correct answer marked if the admin allows it).
+* When the test ends, each question message shows the correct answer and its explanation (if the
+  admin allows revealing answers). Answer distributions are only in the admin panel and reports.
 """
 
 from __future__ import annotations
@@ -23,7 +27,7 @@ import asyncio
 import logging
 import random
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime
 from enum import Enum
 
 from aiogram import Bot
@@ -64,14 +68,13 @@ from app.services.attempts import (
     start_attempt,
 )
 from app.services.users import upsert_user
-from app.utils.text import esc, progress_bar, truncate
+from app.utils.text import esc, truncate
 from app.utils.time import fmt_dt, fmt_hours, utcnow
 
 logger = logging.getLogger(__name__)
 
 SEPARATOR = "━━━━━━━━━━━━━━━━"
 ALERT_LIMIT = 200
-REFRESH_MIN_INTERVAL = timedelta(seconds=20)
 _sending: set[int] = set()  # post ids currently being sent by THIS process (prevents double sending)
 
 
@@ -95,6 +98,12 @@ class GroupAnswerResult:
     finished: bool = False
     attempt: TestAttempt | None = None
     explanation: str = ""
+    correct_text: str = ""
+    question: TestQuestion | None = None
+    opts: list[str] | None = None
+    position: int = 0
+    total: int = 0
+    private_chat: bool = False
 
 
 # ------------------------------------------------------------------------------ rendering
@@ -104,44 +113,41 @@ def answer_keyboard(gqm: GroupQuestionMessage) -> InlineKeyboardMarkup:
     return kb([(LETTERS[i], GroupAnsCB(m=gqm.id, o=LETTERS[i])) for i in range(len(gqm.opts))])
 
 
-def render_question(tq: TestQuestion, gqm: GroupQuestionMessage, total: int, answered: int) -> str:
-    lines = [SEPARATOR, f"📝 <b>{gqm.position + 1} / {total}</b>", "", f"<b>{esc(tq.question_text)}</b>", ""]
+def render_question(tq: TestQuestion, gqm: GroupQuestionMessage, total: int) -> str:
+    lines = [f"📝 <b>Savol {gqm.position + 1} / {total}</b>", "", f"<b>{esc(tq.question_text)}</b>", ""]
     for i, original in enumerate(gqm.opts):
         lines.append(f"<b>{LETTERS[i]})</b> {esc(tq.options[original])}")
-    lines += ["", t("gt.choose"), t("gt.answered_count", n=answered), SEPARATOR]
+    lines += ["", SEPARATOR, t("gt.choose")]
     return "\n".join(lines)
 
 
-def render_question_final(
-    tq: TestQuestion, gqm: GroupQuestionMessage, total: int, distribution: dict[str, int], reveal: bool
-) -> str:
-    answered = sum(distribution.values())
-    lines = [SEPARATOR, f"📝 <b>{gqm.position + 1} / {total}</b> — {t('gt.final_results')}", "",
+def render_question_final(tq: TestQuestion, gqm: GroupQuestionMessage, total: int, reveal: bool) -> str:
+    """Question after the test ended: the correct answer and why (no vote counts)."""
+    lines = [f"📝 <b>Savol {gqm.position + 1} / {total}</b> — {t('gt.final_results')}", "",
              f"<b>{esc(tq.question_text)}</b>", ""]  # fmt: skip
     for i, original in enumerate(gqm.opts):
-        n = distribution.get(original, 0)
-        share = n / answered * 100 if answered else 0
-        mark = " ✅" if reveal and original == tq.correct_option else ""
-        lines.append(f"<b>{LETTERS[i]})</b> {esc(tq.options[original])}{mark}")
-        lines.append(f"    {progress_bar(share, 8)} {share:.0f}% ({n})")
-    lines += ["", t("gt.total_answered", n=answered), SEPARATOR]
+        mark = ("✅" if original == tq.correct_option else "▫️") if reveal else "▫️"
+        lines.append(f"{mark} <b>{LETTERS[i]})</b> {esc(tq.options[original])}")
+    if reveal and tq.explanation:
+        lines += ["", t("quiz.explanation", text=esc(tq.explanation))]
+    if not reveal:
+        lines += ["", t("gt.final_hidden")]
     return "\n".join(lines)
 
 
-def render_header(test: Test, started: int | None = None, finished: bool = False) -> str:
-    hours = max(1, round((test.deadline_at - test.starts_at).total_seconds() / 3600))
-    key = "gt.header_finished" if finished else "gt.header"
+def render_header(
+    test: Test, started: int | None = None, finished: bool = False, sources: list[str] | None = None
+) -> str:
+    if finished:
+        return t("gt.header_finished", title=esc(test.title), n=test.question_count, end=fmt_dt(utcnow()))
     text = t(
-        key,
-        title=esc(test.title),
-        n=test.question_count,
-        duration=fmt_hours(hours),
-        start=fmt_dt(test.starts_at),
-        end=fmt_dt(test.deadline_at),
-        passing=test.passing_percent,
+        "gt.header", title=esc(test.title), n=test.question_count, duration=fmt_hours(test.duration_seconds / 3600)
     )
-    if test.description and not finished:
+    if sources:
+        text += "\n" + t("announce.sources", s=esc(" + ".join(sources)))
+    if test.description:
         text += "\n\n" + esc(truncate(test.description, 500))
+    text += "\n\n" + t("gt.header_hint")
     if started is not None:
         text += "\n\n" + t("gt.participants", n=started)
     return text
@@ -174,9 +180,10 @@ async def _call(coro_factory, *, what: str):
 
 
 async def ensure_post(
-    session: AsyncSession, test: Test, group: Group, rng: random.Random | None = None
+    session: AsyncSession, test: Test, group: Group, rng: random.Random | None = None, with_questions: bool = False
 ) -> GroupTestPost:
-    """Create (once) the post and its question-message rows with the option order for the group."""
+    """Create (once) the group post. ``with_questions`` additionally creates shared in-group question
+    messages (legacy mode; new posts only carry the ▶️ TESTNI BOSHLASH header)."""
     existing = (
         await session.execute(
             select(GroupTestPost).where(GroupTestPost.test_id == test.id, GroupTestPost.group_id == group.id)
@@ -194,6 +201,8 @@ async def ensure_post(
         .scalars()
         .all()
     )
+    if not with_questions:
+        questions = []
     if test.randomize_questions:
         rng.shuffle(questions)
     post = GroupTestPost(test_id=test.id, group_id=group.id, chat_id=group.chat_id)
@@ -230,8 +239,11 @@ async def send_post(bot: Bot, session_maker: async_sessionmaker[AsyncSession], p
             assert test is not None
             if post.header_message_id is None:
                 try:
+                    from app.services.test_builder import source_names
+
+                    header = render_header(test, sources=await source_names(session, test.id))
                     msg = await _call(
-                        lambda: bot.send_message(post.chat_id, render_header(test), reply_markup=header_keyboard(post)),
+                        lambda: bot.send_message(post.chat_id, header, reply_markup=header_keyboard(post)),
                         what="header",
                     )
                 except TelegramForbiddenError:
@@ -261,7 +273,7 @@ async def send_post(bot: Bot, session_maker: async_sessionmaker[AsyncSession], p
                 try:
                     msg = await _call(
                         lambda tq=tq, gqm=gqm: bot.send_message(
-                            post.chat_id, render_question(tq, gqm, total, 0), reply_markup=answer_keyboard(gqm)
+                            post.chat_id, render_question(tq, gqm, total), reply_markup=answer_keyboard(gqm)
                         ),
                         what="question",
                     )
@@ -317,6 +329,12 @@ async def post_to_group_and_report(
     return ok
 
 
+async def post_has_questions(session: AsyncSession, post_id: int) -> bool:
+    """Legacy posts carry shared question messages; new posts are only the START header."""
+    stmt = select(func.count(GroupQuestionMessage.id)).where(GroupQuestionMessage.post_id == post_id)
+    return bool((await session.execute(stmt)).scalar_one())
+
+
 async def posted_group_ids(session: AsyncSession, test_id: int) -> set[int]:
     rows = await session.execute(select(GroupTestPost.group_id).where(GroupTestPost.test_id == test_id))
     return set(rows.scalars().all())
@@ -330,10 +348,12 @@ async def _authorise(
 ) -> tuple[User | None, GroupAnswerCode | None]:
     user = await upsert_user(session, tg_user)
     await group_service.mark_membership(session, group, user, True)
-    if user.status == UserStatus.INACTIVE:
+    if user.status in (UserStatus.INACTIVE, UserStatus.BLOCKED):
         return user, GroupAnswerCode.BLOCKED
     if user.status == UserStatus.PENDING:
-        if await settings_service.get_value(session, "auto_approve_group_members"):
+        if await settings_service.get_value(session, "auto_approve_all") or await settings_service.get_value(
+            session, "auto_approve_group_members"
+        ):
             user.status = UserStatus.ACTIVE
             await session.commit()
         else:
@@ -366,8 +386,10 @@ async def _get_or_start_attempt(
     attempt = await get_in_progress(session, test.id, user.id)
     if attempt is not None:
         return attempt
-    result = await start_attempt(session, user, test.id, chat_id=post.chat_id, now=now,
-                                 layout=await _layout(session, post.id))  # fmt: skip
+    # Legacy posts with shared question messages: the attempt uses the group's letters; header-only
+    # posts: the attempt gets its own (shuffled) layout like any private test.
+    layout = await _layout(session, post.id) or None
+    result = await start_attempt(session, user, test.id, chat_id=None, now=now, layout=layout)
     return result.attempt
 
 
@@ -423,16 +445,19 @@ async def submit_group_answer(
         return GroupAnswerResult(problem or GroupAnswerCode.INVALID)
     # Plain values only from here on: a rollback inside start_attempt (concurrent double click)
     # expires every ORM object in the session.
-    user_id, telegram_id = user.id, user.telegram_id
+    user_id, telegram_id, private_chat = user.id, user.telegram_id, user.has_private_chat
     test_id, tq_id, position, opts = test.id, gqm.test_question_id, gqm.position, list(gqm.opts)
     reveal = test.answer_reveal
 
     async def duplicate() -> GroupAnswerResult:
         previous = (
             await session.execute(
-                select(UserAnswer.selected_display).where(
+                select(UserAnswer.selected_display)
+                .where(
                     UserAnswer.user_id == user_id, UserAnswer.test_id == test_id, UserAnswer.test_question_id == tq_id
                 )
+                .order_by(UserAnswer.id.desc())
+                .limit(1)
             )
         ).scalar_one_or_none()
         return GroupAnswerResult(GroupAnswerCode.DUPLICATE, selected=previous)
@@ -450,9 +475,7 @@ async def submit_group_answer(
         return await duplicate()
     exists = (
         await session.execute(
-            select(UserAnswer.id).where(
-                UserAnswer.user_id == user_id, UserAnswer.test_id == test_id, UserAnswer.test_question_id == tq_id
-            )
+            select(UserAnswer.id).where(UserAnswer.attempt_id == attempt_id, UserAnswer.test_question_id == tq_id)
         )
     ).scalar_one_or_none()
     if exists is not None:
@@ -470,6 +493,7 @@ async def submit_group_answer(
     ).scalar_one_or_none()
     is_correct = original == tq.correct_option
     explanation = tq.explanation
+    correct_text = tq.options[tq.correct_option]
     session.add(
         UserAnswer(
             attempt_id=attempt_id,
@@ -510,11 +534,21 @@ async def submit_group_answer(
         finished=finished,
         attempt=attempt,
         explanation=explanation,
+        correct_text=correct_text,
+        question=tq,
+        opts=opts,
+        position=position,
+        total=attempt.total_questions,
+        private_chat=private_chat,
     )
 
 
 def answer_alert(result: GroupAnswerResult) -> str:
-    """Private popup shown only to the employee who clicked (max 200 characters)."""
+    """Private popup shown only to the employee who clicked (max 200 characters).
+
+    The full explanation does not fit into an alert, so it goes to the private chat (see the group
+    handler); the alert says where to read it.
+    """
     code = result.code
     if code == GroupAnswerCode.DUPLICATE:
         text = t("gt.alert.duplicate")
@@ -523,13 +557,17 @@ def answer_alert(result: GroupAnswerResult) -> str:
         return text
     if code != GroupAnswerCode.ACCEPTED:
         return t(f"gt.alert.{code.value}")
+    tail = t("gt.alert.more_in_dm") if result.private_chat else t("gt.alert.open_bot")
     if result.reveal == AnswerReveal.IMMEDIATE:
-        key = "gt.alert.correct" if result.is_correct else "gt.alert.wrong"
-        text = t(key, selected=result.selected, correct=result.correct)
-        if result.explanation:
-            room = ALERT_LIMIT - len(text) - 3
-            if room > 20:
-                text += "\n💡 " + truncate(result.explanation, room)
+        if result.is_correct:
+            text = t("gt.alert.correct", selected=result.selected)
+        else:
+            text = t("gt.alert.wrong", selected=result.selected, correct=result.correct)
+            room = ALERT_LIMIT - len(text) - len(tail) - 10
+            if result.correct_text and room > 15:
+                text += " — " + truncate(result.correct_text, room)
+        if result.explanation and not result.finished:
+            text += "\n" + tail
     else:
         text = t("gt.alert.accepted", selected=result.selected)
     if result.finished and result.attempt is not None:
@@ -543,90 +581,11 @@ def answer_alert(result: GroupAnswerResult) -> str:
     return truncate(text, ALERT_LIMIT)
 
 
-# ------------------------------------------------------------------------------ live counters & final results
-
-
-async def _answer_counts(session: AsyncSession, test_id: int) -> dict[int, int]:
-    rows = await session.execute(
-        select(UserAnswer.test_question_id, func.count(UserAnswer.id)).where(UserAnswer.test_id == test_id)
-        .group_by(UserAnswer.test_question_id)
-    )  # fmt: skip
-    return {tq_id: n for tq_id, n in rows}
-
-
-async def refresh_counters(bot: Bot, session_maker: async_sessionmaker[AsyncSession], max_edits: int = 6) -> int:
-    """Update "👥 Javob berdi: N" on question messages whose count changed (throttled)."""
-    edits = 0
-    now = utcnow()
-    async with session_maker() as session:
-        posts = list(
-            (
-                await session.execute(
-                    select(GroupTestPost)
-                    .join(Test, Test.id == GroupTestPost.test_id)
-                    .where(GroupTestPost.finalized_at.is_(None), Test.status == TestStatus.ACTIVE)
-                )
-            )
-            .scalars()
-            .all()
-        )
-        for post in posts:
-            counts = await _answer_counts(session, post.test_id)
-            messages = list(
-                (
-                    await session.execute(
-                        select(GroupQuestionMessage)
-                        .where(GroupQuestionMessage.post_id == post.id, GroupQuestionMessage.message_id.is_not(None))
-                        .order_by(GroupQuestionMessage.position)
-                    )
-                )
-                .scalars()
-                .all()
-            )
-            total = (
-                await session.execute(
-                    select(func.count(GroupQuestionMessage.id)).where(GroupQuestionMessage.post_id == post.id)
-                )
-            ).scalar_one()
-            per_post = 0
-            for gqm in messages:
-                n = counts.get(gqm.test_question_id, 0)
-                if n == gqm.rendered_count or (gqm.rendered_at and now - gqm.rendered_at < REFRESH_MIN_INTERVAL):
-                    continue
-                if per_post >= max_edits:
-                    break
-                tq = await session.get(TestQuestion, gqm.test_question_id)
-                assert tq is not None
-                await _call(
-                    lambda tq=tq, gqm=gqm, n=n: bot.edit_message_text(
-                        render_question(tq, gqm, total, n), chat_id=post.chat_id, message_id=gqm.message_id,
-                        reply_markup=answer_keyboard(gqm),
-                    ),
-                    what="refresh",
-                )  # fmt: skip
-                gqm.rendered_count = n
-                gqm.rendered_at = now
-                per_post += 1
-                edits += 1
-            started = (
-                await session.execute(select(func.count(TestAttempt.id)).where(TestAttempt.test_id == post.test_id))
-            ).scalar_one()
-            await session.commit()
-            if post.header_message_id and per_post:
-                test = await session.get(Test, post.test_id)
-                assert test is not None
-                await _call(
-                    lambda test=test, post=post, started=started: bot.edit_message_text(
-                        render_header(test, started), chat_id=post.chat_id, message_id=post.header_message_id,
-                        reply_markup=header_keyboard(post),
-                    ),
-                    what="header",
-                )  # fmt: skip
-    return edits
+# ------------------------------------------------------------------------------ final results
 
 
 async def finalize_posts(bot: Bot, session_maker: async_sessionmaker[AsyncSession]) -> int:
-    """For ended tests: lock answering, show poll-like final results and a closing message."""
+    """For ended tests: lock answering, reveal correct answers with explanations and post a closing message."""
     done = 0
     async with session_maker() as session:
         ids = list(
@@ -653,14 +612,6 @@ async def finalize_posts(bot: Bot, session_maker: async_sessionmaker[AsyncSessio
             test = await session.get(Test, post.test_id)
             assert test is not None
             reveal = test.answer_reveal != AnswerReveal.NEVER
-            dist_rows = await session.execute(
-                select(UserAnswer.test_question_id, UserAnswer.selected_option, func.count(UserAnswer.id))
-                .where(UserAnswer.test_id == test.id)
-                .group_by(UserAnswer.test_question_id, UserAnswer.selected_option)
-            )
-            distribution: dict[int, dict[str, int]] = {}
-            for tq_id, letter, n in dist_rows:
-                distribution.setdefault(tq_id, {})[letter] = n
             messages = list(
                 (
                     await session.execute(
@@ -676,7 +627,7 @@ async def finalize_posts(bot: Bot, session_maker: async_sessionmaker[AsyncSessio
                 assert tq is not None
                 await _call(
                     lambda tq=tq, gqm=gqm: bot.edit_message_text(
-                        render_question_final(tq, gqm, len(messages), distribution.get(tq.id, {}), reveal),
+                        render_question_final(tq, gqm, len(messages), reveal),
                         chat_id=post.chat_id, message_id=gqm.message_id, reply_markup=None,
                     ),
                     what="final",
@@ -744,7 +695,9 @@ async def active_group_tests(session: AsyncSession, chat_id: int) -> list[Test]:
     now = utcnow()
     group_id = (await session.execute(select(Group.id).where(Group.chat_id == chat_id))).scalar_one_or_none()
     posted = select(GroupTestPost.test_id).where(GroupTestPost.chat_id == chat_id)
-    audience = Test.id.in_(posted) | Test.group_id.is_(None)
+    from app.models import TestAudience
+
+    audience = Test.id.in_(posted) | (Test.group_id.is_(None) & (Test.audience != TestAudience.USERS))
     if group_id is not None:
         audience = audience | (Test.group_id == group_id)
     stmt = (

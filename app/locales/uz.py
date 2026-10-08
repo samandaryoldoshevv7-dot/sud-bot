@@ -76,6 +76,8 @@ TEXTS: dict[str, str] = {
     "menu.materials": "📚 Materiallar",
     "menu.news": "📰 Yangiliklar",
     "menu.tests": "📝 Testlar",
+    "menu.create_test": "➕ Test yaratish",
+    "menu.results": "📋 Natijalar",
     "menu.questions": "🗂 Savollar banki",
     "menu.statistics": "📊 Statistika",
     "menu.rankings": "🏆 Reyting",
@@ -85,17 +87,47 @@ TEXTS: dict[str, str] = {
     "ai.not_configured": "⚠️ AI sozlanmagan: GROQ_API_KEY muhit o'zgaruvchisini kiriting. Hozircha faqat savollar bankidagi tasdiqlangan savollardan foydalaniladi.",
     "ai.not_configured_short": "AI sozlanmagan — faqat savollar banki ishlatiladi",
     # ------------------------------------------------------------------ employee
-    "emp.btn.my_tests": "📝 Mening testlarim",
+    "emp.btn.my_tests": "📚 Testlarim",
+    "emp.btn.my_tests_old": "📝 Mening testlarim",
     "emp.btn.my_results": "📊 Natijalarim",
     "emp.btn.help": "ℹ️ Yordam",
     "emp.btn.admin_panel": "👨‍💼 Admin panel",
     "emp.btn.start_test": "▶️ TESTNI BOSHLASH",
-    "emp.btn.continue_test": "▶️ Davom ettirish",
+    "emp.btn.continue_test": "⏯ DAVOM ETTIRISH",
+    "emp.btn.retake": "🔁 QAYTA TOPSHIRISH",
     "emp.btn.view_result": "📊 Natijani ko'rish",
     "emp.btn.corrections": "📋 Xatolarni ko'rish",
     "emp.no_tests": "📭 Hozircha siz uchun ochiq test yo'q.",
     "emp.no_results": "📭 Siz hali birorta testni yakunlamagansiz.",
-    "emp.my_tests.title": "📝 <b>Siz uchun mavjud testlar</b>",
+    "emp.my_tests.title": "📚 <b>TESTLARIM</b>",
+    "emp.state.new": "🟢 Ishlanmagan",
+    "emp.state.progress": "🟡 Jarayonda",
+    "emp.state.done": "🔵 Tugatilgan",
+    "emp.state.expired": "🔴 Muddati tugagan",
+    "emp.list.btn.start": "▶️ {title}",
+    "emp.list.btn.continue": "⏯ {title}",
+    "emp.list.btn.result": "📊 {title}",
+    "emp.list.btn.retake": "🔁 {title}",
+    "emp.card.questions": "📝 {n} ta savol",
+    "emp.card.duration": "⏱ {d}",
+    "emp.card.timer_note": "Vaqt «▶️ TESTNI BOSHLASH» bosilgan paytdan hisoblanadi: {d}.",
+    "emp.card.progress": "Javob berilgan: {done}/{total}",
+    "emp.card.started": "Boshlanish: {d}",
+    "emp.card.ends": "Tugash: {d}",
+    "emp.card.left": "⏳ Qolgan vaqt: {d}",
+    "emp.card.score": "📊 Natija: {score}",
+    "emp.card.paused": "⏸ Test administrator tomonidan vaqtincha to'xtatilgan.",
+    "quiz.source": "📚 Manba: {s}",
+    "quiz.time_left": "⏳ Qolgan vaqt: {d}",
+    "quiz.accepted": "🔒 <b>JAVOB QABUL QILINDI</b>",
+    "quiz.your_answer": "Sizning javobingiz:",
+    "quiz.reveal_later": "To'g'ri javob test yakunida ko'rsatiladi.",
+    "quiz.correct": "✅ <b>TO'G'RI JAVOB</b>",
+    "quiz.wrong": "❌ <b>NOTO'G'RI JAVOB</b>",
+    "quiz.correct_answer": "✅ <b>TO'G'RI JAVOB:</b>",
+    "quiz.explanation": "💡 Izoh: {text}",
+    "quiz.btn.close": "✖️ CHIQISH",
+    "quiz.paused": "⏸ Test vaqtincha to'xtatilgan. Javob qabul qilinmadi.",
     "emp.my_tests.deadline": "muddat: {d}",
     "emp.results.title": "📊 <b>Mening natijalarim</b>",
     "emp.test_card.title": "📝 <b>Test:</b> {title}",
@@ -106,7 +138,7 @@ TEXTS: dict[str, str] = {
     "emp.test_card.in_progress": "⏳ Siz bu testni boshlagansiz: {done}/{total} savolga javob berdingiz.",
     "emp.test_card.completed": "✅ Siz bu testni yakunlagansiz. Natija: <b>{score}</b>",
     "emp.test_card.expired_attempt": "⌛ Urinishingiz muddati tugagan. Natija: <b>{score}</b>",
-    "emp.test_started": "🚀 <b>{title}</b> testi boshlandi.\nJami savollar: <b>{n}</b>. Omad!",
+    "emp.test_started": "▶️ <b>{title}</b>\n\n📝 {n} ta savol\nBoshlanish: <b>{start}</b>\nTugash: <b>{end}</b>",
     "emp.started": "Test boshlandi",
     "emp.resumed": "Test davom ettirilmoqda",
     "emp.private_only": "Testni bot bilan shaxsiy chatda topshiring.",
@@ -118,18 +150,18 @@ TEXTS: dict[str, str] = {
     "emp.question.explanation": "💡 {text}",
     "emp.answer.duplicate": "Bu savolga allaqachon javob berilgan.",
     "emp.answer.not_in_progress": "Bu test urinishi yakunlangan.",
-    "emp.answer.expired": "⌛ Test muddati tugadi. Javoblaringiz saqlandi.",
+    "emp.answer.expired": "❌ TEST VAQTI TUGADI. Javoblaringiz saqlandi.",
     "emp.answer.still_in_progress": "Test hali yakunlanmagan.",
-    "emp.result.header": "🏁 <b>TEST YAKUNLANDI</b>",
-    "emp.result.header_expired": "⌛ <b>TEST MUDDATI TUGADI</b>",
-    "emp.result.test": "📝 Test: <b>{title}</b>",
-    "emp.result.correct": "✅ To'g'ri: <b>{c}/{total}</b>",
-    "emp.result.incorrect": "❌ Noto'g'ri: <b>{n}</b>",
-    "emp.result.unanswered": "⚪️ Javobsiz: <b>{n}</b>",
-    "emp.result.score": "📈 Natija: <b>{score}</b>",
-    "emp.result.time": "⏱ Vaqt: <b>{time}</b>",
-    "emp.result.passed": "🎉 Tabriklaymiz, siz testdan o'tdingiz!",
-    "emp.result.failed": "📚 Afsuski, o'tish bali ({p}%) to'planmadi. Materiallarni qayta o'rganing.",
+    "emp.result.header": "🎯 <b>TEST YAKUNLANDI</b>",
+    "emp.result.header_expired": "❌ <b>TEST VAQTI TUGADI</b>",
+    "emp.result.questions": "📝 Savollar: {n}",
+    "emp.result.correct": "✅ To'g'ri: {c}",
+    "emp.result.incorrect": "❌ Noto'g'ri: {n}",
+    "emp.result.unanswered": "⚪️ Javobsiz: {n}",
+    "emp.result.score": "📊 Natija: <b>{score}</b>",
+    "emp.result.time": "⏱ Sarflangan vaqt: {time}",
+    "emp.result.by_source": "📚 <b>MANBA BO'YICHA NATIJA</b>",
+    "emp.result.source_row": "{total} savol — {correct} to'g'ri",
     "emp.corrections.title": "📋 <b>{title}</b> — xatolar tahlili",
     "emp.corrections.item": (
         "<b>Savol {n}.</b> {question}\n"
@@ -138,7 +170,7 @@ TEXTS: dict[str, str] = {
         "💡 {explanation}\n"
         "📖 Manba: <i>{source}</i>"
     ),
-    "emp.corrections.none": "🎉 Xato javoblar yo'q!",
+    "emp.corrections.none": "Xato javoblar yo'q.",
     "emp.corrections.hidden": "Bu test uchun to'g'ri javoblar ko'rsatilmaydi.",
     "emp.start_error.not_found": "⚠️ Test topilmadi yoki hali e'lon qilinmagan.",
     "emp.start_error.not_active": "⚠️ Bu test hozir faol emas.",
@@ -146,18 +178,16 @@ TEXTS: dict[str, str] = {
     "emp.start_error.deadline_passed": "⌛ Bu test muddati tugagan.",
     "emp.start_error.user_not_active": "⛔️ Sizning hisobingiz faol emas.",
     "emp.start_error.not_in_group": "⛔️ Bu test boshqa guruh xodimlari uchun.",
-    "emp.start_error.already_completed": "✅ Siz bu testni allaqachon topshirgansiz. Qayta topshirishga ruxsat yo'q.",
+    "emp.start_error.already_completed": "🔵 Siz bu testni topshirgansiz. Qayta topshirish faqat administrator ruxsati bilan.",
     "emp.start_error.no_questions": "⚠️ Testda savollar yo'q.",
+    "emp.start_error.paused": "⏸ Test administrator tomonidan vaqtincha to'xtatilgan.",
+    "emp.start_error.not_assigned": "⛔️ Bu test sizga berilmagan.",
     "emp.test_card.group_mode": "👥 Bu test guruhda ishlanadi. Savollarni guruhda ko'rmasangiz, shu yerda «▶️ TESTNI BOSHLASH» ni bosing — javoblaringiz o'sha testga yoziladi (har bir savolga bitta javob).",
     "reminder.body": "⏰ <b>Eslatma!</b>\n\n«{title}» testini yakunlash muddati: <b>{deadline}</b>.\nIltimos, testni o'z vaqtida topshiring.",
-    "announce.group_header": "📢 <b>YANGI TEST E'LON QILINDI</b>",
-    "announce.dm_header": "👋 Assalomu alaykum!\nSiz uchun yangi test mavjud.",
-    "announce.body": (
-        "📝 <b>Test:</b> {title}\n"
-        "❓ <b>Savollar:</b> {questions}\n"
-        "⏰ <b>Muddat:</b> {duration} ({deadline} gacha)\n"
-        "🎯 <b>O'tish bali:</b> {passing}%"
-    ),
+    "announce.group_header": "📚 <b>YANGI TEST</b>",
+    "announce.dm_header": "📚 <b>Sizga yangi test berildi</b>",
+    "announce.body": "<b>{title}</b>\n\n📝 {questions} ta savol\n⏱ {duration}",
+    "announce.sources": "📚 Manbalar: {s}",
     "summary.test_ended": (
         "🏁 <b>Test yakunlandi</b>: {title} (#{id})\n\n"
         "👥 Jami xodimlar: <b>{total}</b>\n"
@@ -168,40 +198,36 @@ TEXTS: dict[str, str] = {
         "📊 Qatnashish: <b>{rate}</b>"
     ),
     # ------------------------------------------------------------------ tests inside a group
-    "gt.header": (
-        "📝 <b>YANGI TEST BOSHLANDI</b>\n\n"
-        "📚 Test: <b>{title}</b>\n"
-        "❓ Savollar: <b>{n} ta</b>\n"
-        "⏰ Muddat: <b>{duration}</b>\n"
-        "▶️ Boshlanish: {start}\n"
-        "🏁 Tugash vaqti: <b>{end}</b>\n"
-        "🎯 O'tish bali: {passing}%\n\n"
-        "Quyidagi savollarga A/B/C/D tugmalari orqali javob bering. "
-        "<b>Har bir savolga faqat bir marta javob berish mumkin</b> — javobni o'zgartirib bo'lmaydi."
+    "gt.header": "📚 <b>YANGI TEST</b>\n\n<b>{title}</b>\n\n📝 {n} ta savol\n⏱ {duration}",
+    "gt.header_hint": (
+        "▶️ <b>TESTNI BOSHLASH</b> tugmasini bosing — test siz uchun alohida, bot bilan shaxsiy chatda ochiladi. "
+        "Javoblaringizni boshqalar ko'rmaydi; vaqt tugmani bosgan paytingizdan hisoblanadi."
     ),
-    "gt.header_finished": "⏰ <b>TEST MUDDATI TUGADI</b>\n\n📚 Test: <b>{title}</b>\n❓ Savollar: {n} ta\n🏁 Yopildi: {end}",
+    "gt.header_finished": "🏁 <b>TEST YAKUNLANDI</b>\n\n📚 <b>{title}</b>\n📝 {n} ta savol\nYopildi: {end}",
     "gt.participants": "👥 Qatnashmoqda: <b>{n}</b>",
-    "gt.choose": "Javobni tanlang 👇",
-    "gt.answered_count": "👥 Javob berdi: {n}",
-    "gt.final_results": "YAKUNIY NATIJA",
-    "gt.total_answered": "👥 Jami javoblar: {n}",
+    "gt.choose": "👇 Javobni tanlang. Tanlovingizni faqat siz ko'rasiz, javobni o'zgartirib bo'lmaydi.",
+    "gt.final_results": "javob ochildi",
+    "gt.final_hidden": "🔒 Test yakunlandi. To'g'ri javoblar ko'rsatilmaydi.",
     "gt.closed_summary": "⏰ <b>TEST MUDDATI TUGADI</b>\n\n«{title}»\n👥 Boshlaganlar: {started}\n✅ Tugatganlar: {completed}\n\nNatijalar administratorga yuborildi.",
     "gt.alert.started": "▶️ Test boshlandi! Javob berilgan: {done}/{total}.\nSavollar shu guruhda. Har bir savolga faqat bir marta javob bera olasiz.",
+    "gt.alert.open_private": "▶️ Test siz uchun ochildi ({done}/{total}). Savollar bot bilan shaxsiy chatda.",
     "gt.alert.already_finished": "✅ Siz bu testni allaqachon yakunlagansiz.",
     "gt.alert.duplicate": "⚠️ Bu savolga siz allaqachon javob bergansiz.",
     "gt.alert.your_choice": "🔒 Tanlangan: {letter}",
     "gt.alert.accepted": "✅ Javobingiz qabul qilindi.\n🔒 Tanlangan: {selected}",
-    "gt.alert.correct": "✅ To'g'ri! Javob qabul qilindi.\nSizning javobingiz: {selected}",
-    "gt.alert.wrong": "❌ Javob qabul qilindi.\nSizning javobingiz: {selected}\nTo'g'ri javob: {correct}",
+    "gt.alert.correct": "✅ TO'G'RI JAVOB!\nSiz tanladingiz: {selected}",
+    "gt.alert.wrong": "❌ NOTO'G'RI JAVOB\nSiz tanladingiz: {selected}\nTo'g'ri javob: {correct}",
+    "gt.alert.more_in_dm": "📩 Nima uchunligi botga yuborildi.",
+    "gt.alert.open_bot": "💬 Izohni olish uchun botga /start yozing.",
     "gt.alert.finished": "🏁 Test yakunlandi: {c}/{total} ({score})",
-    "gt.alert.finished_hidden": "🏁 Barcha savollarga javob berdingiz. Rahmat!",
+    "gt.alert.finished_hidden": "🏁 Barcha savollarga javob berildi.",
     "gt.alert.not_started": "⏳ Test hali boshlanmagan.",
     "gt.alert.expired": "⏰ TEST MUDDATI TUGADI. Javob qabul qilinmaydi.",
     "gt.alert.blocked": "⛔️ Sizning testda qatnashish huquqingiz o'chirilgan.",
     "gt.alert.pending": "⏳ Avval administrator sizni tasdiqlashi kerak. Botga shaxsiy /start yozing.",
     "gt.alert.invalid": "Bu tugma eskirgan.",
-    "gt.admin_posted_ok": "✅ «{title}» testi «{group}» guruhiga yuborildi. Xodimlar shu yerning o'zida javob berishi mumkin.",
-    "gt.admin_post_failed": "❌ «{title}» testini «{group}» guruhiga yuborib bo'lmadi.\n\nTekshiring: bot guruhda bormi va xabar yozish huquqi bormi (botni guruhga <b>administrator</b> qiling), so'ng test sahifasida «▶️ Guruhda boshlash» ni qayta bosing — bot yuborilmay qolgan savollardan davom ettiradi.",
+    "gt.admin_posted_ok": "✅ «{title}» testi «{group}» guruhiga yuborildi. Xodimlar «▶️ TESTNI BOSHLASH» ni bosadi va testni bot bilan shaxsiy chatda ishlaydi (har biri alohida).",
+    "gt.admin_post_failed": "❌ «{title}» testini «{group}» guruhiga yuborib bo'lmadi.\n\nTekshiring: bot guruhda bormi va xabar yozish huquqi bormi (botni guruhga <b>administrator</b> qiling), so'ng test sahifasida «▶️ Guruhda boshlash» ni qayta bosing.",
     "gt.admin_post_failed_auto": "❌ #{id} testini guruhga yuborib bo'lmadi. Botni guruhga administrator qiling va test sahifasida «▶️ Guruhda boshlash» ni bosing.",
     # ------------------------------------------------------------------ groups (in-group)
     "group.registered": "✅ «{title}» guruhi ro'yxatga olindi. Test e'lonlari shu yerga yuboriladi.",
@@ -215,27 +241,126 @@ TEXTS: dict[str, str] = {
     "group.btn.open_bot": "🤖 Botni ochish",
     "group.btn.register": "✅ Ro'yxatga olish",
     "group.added_by_other": "ℹ️ Bot «{title}» guruhiga qo'shildi (ID: <code>{chat_id}</code>).\nUshbu guruhni ro'yxatga olasizmi?",
+    # ------------------------------------------------------------------ ➕ test creation (mixed)
+    "ct.ask_title": "➕ <b>TEST YARATISH</b>\n\nTest nomini kiriting:",
+    "ct.ask_files": (
+        "📚 <b>{title}</b>\n\nTest uchun fayllarni yuboring.\nBir nechta fayl yuborishingiz mumkin "
+        "(PDF, DOCX, TXT, MD; har biri {mb} MB gacha).\n\nHar bir fayl alohida manba bo'ladi: "
+        "masalan «Konstitutsiya.pdf» → manba «Konstitutsiya»."
+    ),
+    "ct.files_title": "📎 <b>Qabul qilingan fayllar: {n}</b>",
+    "ct.files_hint": "Yana fayl yuborishingiz yoki «🔀 Aralashtirib test tuzish» ni bosishingiz mumkin.\n⏳ — o'qilmoqda, ✅ — tayyor, ❌ — o'qib bo'lmadi.",
+    "ct.need_file": "Iltimos, test uchun fayl (PDF, DOCX, TXT, MD) yuboring.",
+    "ct.duplicate_failed": "Bu fayl avval ham yuborilgan, lekin o'qib bo'lmagan edi — qayta o'qilmoqda.",
+    "ct.btn.mix": "🔀 Aralashtirib test tuzish",
+    "ct.btn.custom": "✍️ Maxsus son",
+    "ct.ask_count": "🔀 <b>Aralash test</b>\n\n{sources}\n\nNechta savol tuzilsin?",
+    "ct.ask_custom_count": "Savollar sonini yuboring (1–100):",
+    "ct.ask_duration": "⏱ <b>TEST VAQTI</b>\n\nHar bir xodim uchun vaqt «▶️ TESTNI BOSHLASH» bosilgan paytdan hisoblanadi.",
+    "ct.ask_audience": "👥 <b>Kimlarga berilsin?</b>",
+    "ct.aud.all": "👥 Barcha xodimlarga",
+    "ct.aud.group": "🏢 Guruhga",
+    "ct.aud.users": "☑️ Tanlangan xodimlarga",
+    "ct.aud.one": "👤 Bitta xodimga",
+    "ct.aud.group_named": "🏢 Guruh: {g}",
+    "ct.aud.users_n": "☑️ Tanlangan xodimlar: {n} ta",
+    "ct.ask_group": "🏢 Qaysi guruhga?",
+    "ct.ask_users": "☑️ Xodimlarni tanlang (tanlangan: {n}):",
+    "ct.ask_one": "👤 Xodimni tanlang:",
+    "ct.btn.users_done": "✅ Tayyor ({n})",
+    "ct.need_users": "Kamida bitta xodimni tanlang.",
+    "ct.confirm": (
+        "📚 <b>Aralash test</b>\n\n<b>{title}</b>\n\n{sources}\n\n📝 {n} ta savol\n⏱ {duration}\n{audience}\n\n"
+        "Bot har bir fayldan savol tuzadi, savollarni manbalar bo'yicha aralashtiradi va har biriga manbasini "
+        "biriktiradi. Savollar faqat fayllardagi ma'lumotga asoslanadi."
+    ),
+    "ct.btn.create": "✅ Testni yaratish",
+    "ct.building": "⏳ Test tuzilmoqda: {n} ta savol. Fayllar o'qilmoqda…",
+    "ct.progress_processing": "⏳ Fayllar o'qilmoqda va indekslanmoqda…",
+    "ct.progress": "⏳ Savollar tuzilmoqda: {done}/{total}",
+    "ct.failed_sources": "❌ O'qib bo'lmagan fayllar: {s}",
+    "ct.done": "✅ <b>Test tayyor va yuborildi</b>\n\n📝 Savollar: {created}\n{per_source}\n\n{audience}\nTest xodimlarning «📚 Testlarim» bo'limida paydo bo'ldi.",
+    "ct.partial": (
+        "⚠️ <b>{requested} ta savoldan {created} tasi tuzildi.</b>\n\n{per_source}\n\nSabab: {reason}\n\n"
+        "Fayllarda yetarli faktik ma'lumot bo'lmasa, bot o'zidan savol to'qimaydi."
+    ),
+    "ct.btn.send_partial": "✅ {n} ta savol bilan yuborish",
+    "ct.sent": "Test yuborildi",
+    # ------------------------------------------------------------------ 📊 results (admin)
+    "res.title": "📊 <b>NATIJALAR</b>\n\nTestni tanlang (qavsda — ishtirokchilar soni). Jami: {total}",
+    "res.summary": "👥 Boshlaganlar: <b>{started}</b> / {total} | 🔵 Tugatganlar: <b>{done}</b> | 🟢 Boshlamaganlar: <b>{none}</b>",
+    "res.row": "{total} ta savol\n✅ {correct}\n❌ {wrong}\n{score}",
+    "res.nobody": "Hali hech kim testni boshlamagan.",
+    "res.source_row": "{answered} ta javob — {correct} to'g'ri ({p})",
+    "res.attempt": "Holat: {status}\n✅ {correct} | ❌ {wrong} | savollar: {total} | <b>{score}</b>",
+    "res.times": "Boshlanish: {start}\nTugash muddati: {end}\nSarflangan vaqt: {spent}",
+    "res.q_header": "<b>{n}-savol</b>\n<i>{q}</i>",
+    "res.q_chosen": "Tanladi: {a}",
+    "res.q_ok": "Natija: ✅ To'g'ri",
+    "res.q_bad": "Natija: ❌ Noto'g'ri",
+    "res.q_correct": "To'g'ri javob: {a}",
+    "res.q_source": "Manba: {s}",
+    "res.q_unanswered": "⚪️ Javob berilmagan",
+    "res.btn.extra_time": "⏱ Qo'shimcha vaqt berish",
+    "res.btn.retake": "🔁 Qayta topshirishga ruxsat",
+    "res.btn.remove": "🚫 Testni xodimdan olib tashlash",
+    "res.extra_time_prompt": "⏱ Qancha qo'shimcha vaqt berilsin?\nVaqt tugagan (lekin tugallanmagan) urinish qayta ochiladi va xodim qolgan savoldan davom etadi.",
+    "res.extra_time_done": "✅ Qo'shimcha vaqt berildi. Yangi tugash vaqti: {d}",
+    "res.notify_extra_time": "⏱ «{title}» testi uchun sizga qo'shimcha vaqt berildi: +{plus}.\nYangi tugash vaqti: <b>{d}</b>",
+    "res.retake_done": "✅ Xodimga bir marta qayta topshirishga ruxsat berildi.",
+    "res.notify_retake": "🔁 «{title}» testini qayta topshirishga ruxsat berildi.",
+    "res.remove_confirm": "🚫 «{title}» testi <b>{name}</b> dan olib tashlansinmi?\nJarayondagi urinish bekor qilinadi, berilgan javoblar saqlanadi.",
+    "res.removed": "🚫 Test xodimdan olib tashlandi.",
+    "res.notify_removed": "ℹ️ «{title}» testi siz uchun yopildi.",
+    "res.err.not_found": "Urinish topilmadi.",
+    "res.err.test_not_active": "Test faol emas. Avval testni qayta oching.",
+    "res.err.attempt_finished": "Xodim barcha savollarga javob bergan — qo'shimcha vaqt kerak emas. Qayta topshirishga ruxsat bering.",
+    "res.err.other_attempt_running": "Xodimning boshqa urinishi hozir jarayonda.",
     # ------------------------------------------------------------------ employees (admin)
+    "admin.new_employee_auto": "👤 Yangi xodim botga qo'shildi va avtomatik faollashtirildi:\n{name} (ID: <code>{tg_id}</code>)\n\nKerak bo'lsa profilidan bloklashingiz mumkin.",
+    "start.press_start": "Botdan foydalanish uchun /start buyrug'ini yuboring.",
     "emp_admin.section": (
-        "👥 <b>XODIMLAR</b>\n\n"
-        "Jami: <b>{total}</b>\n🟢 Faol: <b>{active}</b>\n🟡 Tasdiq kutmoqda: <b>{pending}</b>\n🔴 O'chirilgan: <b>{inactive}</b>"
+        "👥 <b>XODIMLAR</b>\n\nJami: <b>{total}</b>\n🟢 Faol: <b>{active}</b>\n🟡 Tasdiq kutmoqda: <b>{pending}</b>\n⛔️ Bloklangan: <b>{blocked}</b>"
     ),
     "emp_admin.btn.all": "📋 Hammasi",
     "emp_admin.btn.active": "🟢 Faollar",
     "emp_admin.btn.pending": "🟡 Kutilmoqda ({n})",
-    "emp_admin.btn.inactive": "🔴 O'chirilganlar",
+    "emp_admin.btn.inactive": "🗑 O'chirilganlar ({n})",
     "emp_admin.btn.search": "🔍 Qidirish",
     "emp_admin.btn.approve": "✅ Tasdiqlash",
     "emp_admin.btn.reject": "🚫 Rad etish",
     "emp_admin.btn.activate": "✅ Faollashtirish",
-    "emp_admin.btn.deactivate": "🚫 Kirishni o'chirish",
+    "emp_admin.btn.blocked": "⛔️ Bloklanganlar",
+    "emp_admin.btn.remove": "🗑 Xodimni o'chirish",
+    "emp_admin.btn.block": "⛔️ Bloklash",
+    "emp_admin.btn.unblock": "✅ Blokdan chiqarish",
+    "emp_admin.notify_blocked": "⛔️ Sizning botdan foydalanish huquqingiz administrator tomonidan bloklandi.",
+    "emp_admin.btn.remove_yes": "🗑 Ha, o'chirish",
+    "emp_admin.btn.restore": "♻️ Qayta tiklash",
+    "emp_admin.btn.erase": "❌ Butunlay o'chirish",
+    "emp_admin.btn.erase_yes": "❌ Ha, butunlay o'chirish",
+    "emp_admin.remove_confirm": (
+        "🗑 <b>{name}</b> xodimlar ro'yxatidan o'chirilsinmi?\n\n"
+        "• U ro'yxatlardan yo'qoladi va testlarda qatnasha olmaydi.\n"
+        "• Avvalgi test natijalari hisobotlarda saqlanib qoladi.\n"
+        "• Kerak bo'lsa «🗑 O'chirilganlar» bo'limidan qayta tiklash mumkin."
+    ),
+    "emp_admin.removed": "🗑 {name} ro'yxatdan o'chirildi.",
+    "emp_admin.erase_confirm": (
+        "❌ <b>{name}</b> butunlay o'chirilsinmi?\n\n"
+        "Xodim bilan birga uning barcha test urinishlari va javoblari ham o'chib ketadi. "
+        "Bu amalni ortga qaytarib bo'lmaydi."
+    ),
+    "emp_admin.erased": "❌ {name} butunlay o'chirildi.",
+    "emp_admin.erase_only_removed": "Avval xodimni ro'yxatdan o'chiring.",
     "emp_admin.btn.profile": "👤 Profil",
     "emp_admin.btn.wrong": "❌ Xato javoblar",
     "emp_admin.btn.rename": "✏️ Ismni tahrirlash",
     "emp_admin.list.all": "📋 <b>Barcha xodimlar</b> ({total})",
     "emp_admin.list.active": "🟢 <b>Faol xodimlar</b> ({total})",
     "emp_admin.list.pending": "🟡 <b>Tasdiq kutayotganlar</b> ({total})",
-    "emp_admin.list.inactive": "🔴 <b>O'chirilgan xodimlar</b> ({total})",
+    "emp_admin.list.blocked": "⛔️ <b>Bloklangan xodimlar</b> ({total})",
+    "emp_admin.list.inactive": "🗑 <b>O'chirilgan xodimlar</b> ({total})\nBular ro'yxatda ko'rinmaydi va testlarda qatnashmaydi.",
     "emp_admin.search_results": "🔍 «{q}» bo'yicha natijalar: {total}",
     "emp_admin.search_prompt": "🔍 Xodim ismi, username yoki Telegram ID raqamini yuboring:",
     "emp_admin.search_short": "Kamida 2 ta belgi kiriting.",
@@ -273,7 +398,8 @@ TEXTS: dict[str, str] = {
     ),
     "user_status.pending": "🟡 Tasdiq kutmoqda",
     "user_status.active": "🟢 Faol",
-    "user_status.inactive": "🔴 O'chirilgan",
+    "user_status.inactive": "🗑 O'chirilgan",
+    "user_status.blocked": "⛔️ Bloklangan",
     # ------------------------------------------------------------------ materials
     "mat.section": "📚 <b>MATERIALLAR</b> (jami: {total})\n\nQavs ichida — savollar banki soni.",
     "mat.empty": "Hali material yuklanmagan.",
@@ -347,6 +473,9 @@ TEXTS: dict[str, str] = {
     "gen.error_note": "ℹ️ {error}",
     "gen.rejected_title": "🚫 Rad etilgan nomzodlar:",
     "gen.btn.review": "👀 Ko'rib chiqish",
+    "gen.reason.missing_source": "AI savol manbasini ko'rsatmadi",
+    "gen.reason.source_mismatch": "AI manbani noto'g'ri ko'rsatdi",
+    "gen.reason.no_source": "savol manbasi aniqlanmadi",
     "gen.reason.no_source_chunks": "Tanlangan manbalarda mos matn bo'laklari yo'q",
     "gen.reason.no_sources": "Testga tayyor manba (material yoki yangilik) tanlanmagan",
     "gen.reason.not_enough": "Yetarli savol yig'ilmadi — qo'shimcha material yuklang yoki savollar sonini kamaytiring",
@@ -439,7 +568,7 @@ TEXTS: dict[str, str] = {
         "🎯 Mavzu: {focus}\n"
         "👥 Auditoriya: {audience}\n"
         "▶️ Boshlanish: <b>{start}</b>\n"
-        "⏰ Muddat: <b>{deadline}</b> ({duration})\n"
+        "⏱ Har bir xodimga: <b>{duration}</b>\n"
         "🔀 Savollarni aralashtirish: {rand_q}\n"
         "🔀 Variantlarni aralashtirish: {rand_o}\n"
         "👁 Javoblarni ko'rsatish: {reveal}\n"
@@ -507,6 +636,21 @@ TEXTS: dict[str, str] = {
     "tests.detail.sources": "📚 Manbalar: {s}",
     "tests.detail.audience": "👥 Auditoriya: {a}",
     "tests.detail.time": "▶️ {start} → ⏰ {deadline} ({duration})",
+    "tests.detail.duration": "⏱ Har bir xodimga: <b>{d}</b> («▶️ TESTNI BOSHLASH» bosilgan paytdan)",
+    "tests.detail.window_open": "📅 Ochiq: {start} dan — administrator tugatguncha",
+    "tests.detail.window": "📅 Boshlash mumkin: {start} → {deadline}",
+    "tests.detail.paused": "⏸ <b>Test vaqtincha to'xtatilgan</b> (deaktiv). Xodimlar boshlay olmaydi va javob bera olmaydi.",
+    "tests.btn.new_advanced": "🛠 Bankdan test (kengaytirilgan sozlash)",
+    "tests.btn.duration": "⏱ Vaqtni o'zgartirish",
+    "tests.btn.pause": "⏸ Deaktiv qilish",
+    "tests.btn.resume": "▶️ Aktiv qilish",
+    "tests.btn.reopen": "🔁 Qayta ochish",
+    "tests.duration_prompt": "⏱ <b>TEST VAQTI</b>\n\nHozir: {d}. Yangi vaqtni tanlang.\nJarayondagi xodimlar uchun tugash vaqti «boshlagan vaqt + yangi vaqt» bo'ladi (agar u hali o'tmagan bo'lsa).",
+    "tests.duration_done": "✅ Vaqt o'zgartirildi. Jarayondagi urinishlardan {n} tasining tugash vaqti yangilandi.",
+    "tests.paused_toast": "⏸ Test deaktiv qilindi.",
+    "tests.resumed_toast": "▶️ Test yana aktiv.",
+    "tests.reopen_confirm": "🔁 <b>{title}</b> testi qayta ochilsinmi?\nTest yana «📚 Testlarim»da ko'rinadi; tugatmaganlar boshlashi yoki qo'shimcha vaqt olishi mumkin.",
+    "tests.reopened_toast": "🔁 Test qayta ochildi.",
     "tests.detail.flags": "🔀 Savollar: {rq} | 🔀 Variantlar: {ro} | 👁 {reveal}\n📍 {mode}",
     "tests.mode.group": "Test guruhning o'zida ishlanadi",
     "tests.mode.private": "Test bot bilan shaxsiy chatda ishlanadi",
@@ -551,6 +695,7 @@ TEXTS: dict[str, str] = {
     "tests.extend_prompt": "⏰ Joriy muddat: <b>{deadline}</b>\n\nYangi tugash vaqtini (KK.OO.YYYY SS:DD) yoki qo'shiladigan soatlar sonini yuboring:",
     "tests.extended": "✅ Yangi muddat: {deadline}",
     "tests.delete_confirm": "🗑 <b>{title}</b> testini o'chirasizmi?",
+    "tests.delete_confirm_results": "🗑 <b>{title}</b> testini o'chirasizmi?\n\n⚠️ Test bilan birga uning barcha urinishlari, javoblari va natijalari ham o'chadi. Bu amalni ortga qaytarib bo'lmaydi.",
     "tests.part.header": "👥 <b>Test #{id}: {title}</b>",
     "tests.part.summary": (
         "📊 <b>TEST STATISTIKASI</b>\nJami xodimlar: <b>{total}</b>\n"
@@ -602,6 +747,8 @@ TEXTS: dict[str, str] = {
     "test_error.deadline_before_start": "Tugash vaqti boshlanish vaqtidan keyin bo'lishi kerak.",
     "test_error.cannot_delete": "Faqat e'lon qilinmagan va urinishlarsiz testni o'chirish mumkin.",
     "test_error.not_active": "Test faol emas.",
+    "test_error.bad_duration": "Vaqt faqat 6 soat, 12 soat, 24 soat yoki 2 kun bo'lishi mumkin.",
+    "test_error.cannot_reopen": "Faqat tugagan yoki yopilgan testni qayta ochish mumkin.",
     "source_kind.material": "📚 Material",
     "source_kind.news": "📰 Yangilik",
     # ------------------------------------------------------------------ question bank
