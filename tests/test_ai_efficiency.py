@@ -123,3 +123,12 @@ async def test_reprocessing_a_material_does_not_generate_questions_again(tg, ses
 
 
 from tests.test_group_flow import tg  # noqa: E402,F401  (fixture)
+
+
+def test_checks_run_on_the_smaller_model_by_default():
+    from app.config.settings import Settings
+
+    settings = Settings(bot_token="x", database_url="postgresql://a@b/c", groq_validation_model="")
+    assert settings.groq_model == "openai/gpt-oss-120b" and settings.validation_model == "openai/gpt-oss-20b"
+    custom = Settings(bot_token="x", database_url="postgresql://a@b/c", groq_validation_model="openai/gpt-oss-120b")
+    assert custom.validation_model == "openai/gpt-oss-120b"
