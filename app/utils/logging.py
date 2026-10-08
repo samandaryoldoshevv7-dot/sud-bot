@@ -75,6 +75,22 @@ class TextFormatter(logging.Formatter):
         return base
 
 
+_RESERVED = frozenset(logging.LogRecord("", 0, "", 0, "", None, None).__dict__) | {"message", "asctime"}
+
+
+class SafeLogger(logging.Logger):
+    """A log call must never break the bot: ``extra`` keys clashing with LogRecord attributes
+    (e.g. ``created``) are renamed instead of raising ``KeyError``."""
+
+    def makeRecord(self, name, level, fn, lno, msg, args, exc_info, func=None, extra=None, sinfo=None):
+        if extra:
+            extra = {(f"{k}_" if k in _RESERVED else k): v for k, v in extra.items()}
+        return super().makeRecord(name, level, fn, lno, msg, args, exc_info, func, extra, sinfo)
+
+
+logging.setLoggerClass(SafeLogger)
+
+
 def setup_logging(level: str = "INFO", fmt: str = "json", secrets: list[str] | None = None) -> None:
     handler = logging.StreamHandler(sys.stdout)
     handler.setFormatter(JsonFormatter() if fmt == "json" else TextFormatter())

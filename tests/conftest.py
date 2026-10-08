@@ -56,6 +56,14 @@ def _run_migrations(url: str) -> None:
     cfg = Config(os.path.join(os.path.dirname(os.path.dirname(__file__)), "alembic.ini"))
     cfg.attributes["database_url"] = url
     command.upgrade(cfg, "head")
+    # alembic's logging config disables every existing logger; re-enable them at INFO so each log
+    # call of the bot really runs in tests (a bad ``extra`` key once crashed test building in prod).
+    import logging
+
+    for logger in [logging.getLogger(), *logging.Logger.manager.loggerDict.values()]:
+        if isinstance(logger, logging.Logger):
+            logger.disabled = False
+    logging.getLogger("app").setLevel(logging.INFO)
 
 
 @pytest.fixture(scope="session")

@@ -29,7 +29,7 @@ async def register_group(session: AsyncSession, chat_id: int, title: str, admin:
         group.is_active = True
         group.title = title[:255] or group.title
     await session.commit()
-    logger.info("Group registered", extra={"chat_id": chat_id, "created": created})
+    logger.info("Group registered", extra={"chat_id": chat_id, "new_group": created})
     return group, created
 
 
