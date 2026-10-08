@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.keyboards.callbacks import AdminCB, GroupAnsCB, GroupStartCB
 from app.keyboards.common import kb
 from app.locales import t
+from app.models import AnswerReveal
 from app.services import group_tests
 from app.services import groups as group_service
 from app.services.group_tests import GroupAnswerCode
@@ -183,8 +184,28 @@ async def cb_group_answer(callback: CallbackQuery, callback_data: GroupAnsCB, se
     # Identity comes ONLY from Telegram (callback.from_user), never from callback data.
     result = await group_tests.submit_group_answer(session, callback.from_user, callback_data.m, callback_data.o)
     await callback.answer(group_tests.answer_alert(result), show_alert=True)
-    if result.code == GroupAnswerCode.ACCEPTED and result.finished and result.attempt is not None:
+    if result.code != GroupAnswerCode.ACCEPTED:
+        return
+    if result.private_chat and result.reveal == AnswerReveal.IMMEDIATE and result.question is not None:
+        await _send_answer_card(bot, session, callback.from_user.id, result)
+    if result.finished and result.attempt is not None:
         await _send_private_result(bot, session, callback.from_user.id, result)
+
+
+async def _send_answer_card(bot: Bot, session: AsyncSession, telegram_id: int, result) -> None:
+    """Full feedback in the private chat: marked options, verdict and the complete explanation."""
+    from app.handlers.formatting import answer_card
+    from app.models import Test
+    from app.services.notifications import safe_send
+
+    test = await session.get(Test, result.attempt.test_id) if result.attempt is not None else None
+    header = [
+        f"📝 <b>{esc(truncate(test.title, 80))}</b>" if test else "📝",
+        t("emp.question.header", n=result.position + 1, total=result.total),
+        "",
+    ]
+    await safe_send(bot, telegram_id, answer_card(header, result.question, result.opts or [], result.selected,
+                                                  AnswerReveal.IMMEDIATE))  # fmt: skip
 
 
 async def _send_private_result(bot: Bot, session: AsyncSession, telegram_id: int, result) -> None:

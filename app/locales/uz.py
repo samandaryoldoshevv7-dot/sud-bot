@@ -116,6 +116,13 @@ TEXTS: dict[str, str] = {
     "emp.question.correct": "✅ <b>To'g'ri!</b>",
     "emp.question.wrong": "❌ <b>Noto'g'ri.</b> To'g'ri javob: <b>{letter}</b>",
     "emp.question.explanation": "💡 {text}",
+    "card.yours": "  ⬅️ <i>sizning javobingiz</i>",
+    "card.correct": "✅ <b>TO'G'RI JAVOB!</b> Barakalla!",
+    "card.wrong": "❌ <b>NOTO'G'RI JAVOB</b>\nSiz tanladingiz: <b>{selected}</b>  •  To'g'ri javob: <b>{correct}</b>",
+    "card.why": "💡 <b>Nima uchun?</b>",
+    "card.source": "📄 <i>Manba: {source}</i>",
+    "card.accepted_later": "🔒 Javobingiz qabul qilindi. To'g'ri javob va izoh test yakunida ko'rsatiladi.",
+    "card.accepted": "🔒 Javobingiz qabul qilindi.",
     "emp.answer.duplicate": "Bu savolga allaqachon javob berilgan.",
     "emp.answer.not_in_progress": "Bu test urinishi yakunlangan.",
     "emp.answer.expired": "⌛ Test muddati tugadi. Javoblaringiz saqlandi.",
@@ -181,18 +188,19 @@ TEXTS: dict[str, str] = {
     ),
     "gt.header_finished": "⏰ <b>TEST MUDDATI TUGADI</b>\n\n📚 Test: <b>{title}</b>\n❓ Savollar: {n} ta\n🏁 Yopildi: {end}",
     "gt.participants": "👥 Qatnashmoqda: <b>{n}</b>",
-    "gt.choose": "Javobni tanlang 👇",
-    "gt.answered_count": "👥 Javob berdi: {n}",
-    "gt.final_results": "YAKUNIY NATIJA",
-    "gt.total_answered": "👥 Jami javoblar: {n}",
+    "gt.choose": "👇 Javobni tanlang. Tanlovingizni faqat siz ko'rasiz, javobni o'zgartirib bo'lmaydi.",
+    "gt.final_results": "javob ochildi",
+    "gt.final_hidden": "🔒 Test yakunlandi. To'g'ri javoblar ko'rsatilmaydi.",
     "gt.closed_summary": "⏰ <b>TEST MUDDATI TUGADI</b>\n\n«{title}»\n👥 Boshlaganlar: {started}\n✅ Tugatganlar: {completed}\n\nNatijalar administratorga yuborildi.",
     "gt.alert.started": "▶️ Test boshlandi! Javob berilgan: {done}/{total}.\nSavollar shu guruhda. Har bir savolga faqat bir marta javob bera olasiz.",
     "gt.alert.already_finished": "✅ Siz bu testni allaqachon yakunlagansiz.",
     "gt.alert.duplicate": "⚠️ Bu savolga siz allaqachon javob bergansiz.",
     "gt.alert.your_choice": "🔒 Tanlangan: {letter}",
     "gt.alert.accepted": "✅ Javobingiz qabul qilindi.\n🔒 Tanlangan: {selected}",
-    "gt.alert.correct": "✅ To'g'ri! Javob qabul qilindi.\nSizning javobingiz: {selected}",
-    "gt.alert.wrong": "❌ Javob qabul qilindi.\nSizning javobingiz: {selected}\nTo'g'ri javob: {correct}",
+    "gt.alert.correct": "✅ TO'G'RI JAVOB!\nSiz tanladingiz: {selected}",
+    "gt.alert.wrong": "❌ NOTO'G'RI JAVOB\nSiz tanladingiz: {selected}\nTo'g'ri javob: {correct}",
+    "gt.alert.more_in_dm": "📩 Nima uchunligi botga yuborildi.",
+    "gt.alert.open_bot": "💬 Izohni olish uchun botga /start yozing.",
     "gt.alert.finished": "🏁 Test yakunlandi: {c}/{total} ({score})",
     "gt.alert.finished_hidden": "🏁 Barcha savollarga javob berdingiz. Rahmat!",
     "gt.alert.not_started": "⏳ Test hali boshlanmagan.",
@@ -217,25 +225,42 @@ TEXTS: dict[str, str] = {
     "group.added_by_other": "ℹ️ Bot «{title}» guruhiga qo'shildi (ID: <code>{chat_id}</code>).\nUshbu guruhni ro'yxatga olasizmi?",
     # ------------------------------------------------------------------ employees (admin)
     "emp_admin.section": (
-        "👥 <b>XODIMLAR</b>\n\n"
-        "Jami: <b>{total}</b>\n🟢 Faol: <b>{active}</b>\n🟡 Tasdiq kutmoqda: <b>{pending}</b>\n🔴 O'chirilgan: <b>{inactive}</b>"
+        "👥 <b>XODIMLAR</b>\n\nJami: <b>{total}</b>\n🟢 Faol: <b>{active}</b>\n🟡 Tasdiq kutmoqda: <b>{pending}</b>"
     ),
     "emp_admin.btn.all": "📋 Hammasi",
     "emp_admin.btn.active": "🟢 Faollar",
     "emp_admin.btn.pending": "🟡 Kutilmoqda ({n})",
-    "emp_admin.btn.inactive": "🔴 O'chirilganlar",
+    "emp_admin.btn.inactive": "🗑 O'chirilganlar ({n})",
     "emp_admin.btn.search": "🔍 Qidirish",
     "emp_admin.btn.approve": "✅ Tasdiqlash",
     "emp_admin.btn.reject": "🚫 Rad etish",
     "emp_admin.btn.activate": "✅ Faollashtirish",
-    "emp_admin.btn.deactivate": "🚫 Kirishni o'chirish",
+    "emp_admin.btn.remove": "🗑 Xodimni o'chirish",
+    "emp_admin.btn.remove_yes": "🗑 Ha, o'chirish",
+    "emp_admin.btn.restore": "♻️ Qayta tiklash",
+    "emp_admin.btn.erase": "❌ Butunlay o'chirish",
+    "emp_admin.btn.erase_yes": "❌ Ha, butunlay o'chirish",
+    "emp_admin.remove_confirm": (
+        "🗑 <b>{name}</b> xodimlar ro'yxatidan o'chirilsinmi?\n\n"
+        "• U ro'yxatlardan yo'qoladi va testlarda qatnasha olmaydi.\n"
+        "• Avvalgi test natijalari hisobotlarda saqlanib qoladi.\n"
+        "• Kerak bo'lsa «🗑 O'chirilganlar» bo'limidan qayta tiklash mumkin."
+    ),
+    "emp_admin.removed": "🗑 {name} ro'yxatdan o'chirildi.",
+    "emp_admin.erase_confirm": (
+        "❌ <b>{name}</b> butunlay o'chirilsinmi?\n\n"
+        "Xodim bilan birga uning barcha test urinishlari va javoblari ham o'chib ketadi. "
+        "Bu amalni ortga qaytarib bo'lmaydi."
+    ),
+    "emp_admin.erased": "❌ {name} butunlay o'chirildi.",
+    "emp_admin.erase_only_removed": "Avval xodimni ro'yxatdan o'chiring.",
     "emp_admin.btn.profile": "👤 Profil",
     "emp_admin.btn.wrong": "❌ Xato javoblar",
     "emp_admin.btn.rename": "✏️ Ismni tahrirlash",
     "emp_admin.list.all": "📋 <b>Barcha xodimlar</b> ({total})",
     "emp_admin.list.active": "🟢 <b>Faol xodimlar</b> ({total})",
     "emp_admin.list.pending": "🟡 <b>Tasdiq kutayotganlar</b> ({total})",
-    "emp_admin.list.inactive": "🔴 <b>O'chirilgan xodimlar</b> ({total})",
+    "emp_admin.list.inactive": "🗑 <b>O'chirilgan xodimlar</b> ({total})\nBular ro'yxatda ko'rinmaydi va testlarda qatnashmaydi.",
     "emp_admin.search_results": "🔍 «{q}» bo'yicha natijalar: {total}",
     "emp_admin.search_prompt": "🔍 Xodim ismi, username yoki Telegram ID raqamini yuboring:",
     "emp_admin.search_short": "Kamida 2 ta belgi kiriting.",
@@ -273,7 +298,7 @@ TEXTS: dict[str, str] = {
     ),
     "user_status.pending": "🟡 Tasdiq kutmoqda",
     "user_status.active": "🟢 Faol",
-    "user_status.inactive": "🔴 O'chirilgan",
+    "user_status.inactive": "🗑 O'chirilgan",
     # ------------------------------------------------------------------ materials
     "mat.section": "📚 <b>MATERIALLAR</b> (jami: {total})\n\nQavs ichida — savollar banki soni.",
     "mat.empty": "Hali material yuklanmagan.",

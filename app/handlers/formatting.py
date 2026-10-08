@@ -14,6 +14,7 @@ from app.models import (
     User,
     UserAnswer,
 )
+from app.schemas.ai import LETTERS
 from app.services.attempts import displayed_options
 from app.utils.text import esc, pct, progress_bar, truncate
 from app.utils.time import fmt_dt, fmt_duration, fmt_hours, utcnow
@@ -75,16 +76,42 @@ def question_text(test: Test, attempt: TestAttempt, tq: TestQuestion, item: dict
     return "\n".join(lines)
 
 
-def answered_question_text(base: str, selected: str, reveal: AnswerReveal, is_correct: bool | None,
-                           correct_display: str | None, tq: TestQuestion | None) -> str:  # fmt: skip
-    lines = [base, "", t("emp.question.your_answer", letter=selected)]
-    if reveal == AnswerReveal.IMMEDIATE and is_correct is not None and tq is not None:
-        if is_correct:
-            lines.append(t("emp.question.correct"))
+def answer_card(header: list[str], tq: TestQuestion, opts: list[str], selected: str, reveal: AnswerReveal) -> str:
+    """The question after it was answered: marked options, verdict and the full "why" explanation.
+
+    ``opts`` are the ORIGINAL option letters in the order the employee saw them (A, B, C, ...).
+    """
+    show = reveal == AnswerReveal.IMMEDIATE
+    selected_original = opts[LETTERS.index(selected)] if selected in LETTERS[: len(opts)] else None
+    is_correct = selected_original == tq.correct_option
+    lines = [*header, f"<b>{esc(tq.question_text)}</b>", ""]
+    correct_display = "?"
+    for i, original in enumerate(opts):
+        letter = LETTERS[i]
+        if original == tq.correct_option:
+            correct_display = letter
+        if show and original == tq.correct_option:
+            mark = "✅"
+        elif original == selected_original:
+            mark = "❌" if show else "🔘"
         else:
-            lines.append(t("emp.question.wrong", letter=correct_display or "?"))
-        if tq.explanation:
-            lines.append(t("emp.question.explanation", text=esc(tq.explanation)))
+            mark = "▫️"
+        line = f"{mark} <b>{letter})</b> {esc(tq.options[original])}"
+        if original == selected_original:
+            line += t("card.yours")
+        lines.append(line)
+    lines.append("")
+    if not show:
+        lines.append(t("card.accepted_later" if reveal == AnswerReveal.AFTER_COMPLETION else "card.accepted"))
+        return "\n".join(lines)
+    if is_correct:
+        lines.append(t("card.correct"))
+    else:
+        lines.append(t("card.wrong", selected=selected, correct=correct_display))
+    if tq.explanation:
+        lines += ["", t("card.why"), esc(tq.explanation)]
+    if tq.source_reference:
+        lines += ["", t("card.source", source=esc(truncate(tq.source_reference, 300)))]
     return "\n".join(lines)
 
 

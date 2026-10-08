@@ -175,16 +175,3 @@ async def scheduler_loop(bot: Bot, session_maker: async_sessionmaker[AsyncSessio
         except TimeoutError:
             pass
     logger.info("Scheduler stopped")
-
-
-async def group_refresh_loop(bot: Bot, session_maker: async_sessionmaker[AsyncSession], stop: asyncio.Event) -> None:
-    """Keeps "👥 Javob berdi: N" counters on group question messages up to date (throttled)."""
-    while not stop.is_set():
-        try:
-            await group_tests.refresh_counters(bot, session_maker)
-        except Exception:
-            logger.exception("Group counter refresh failed")
-        try:
-            await asyncio.wait_for(stop.wait(), timeout=15)
-        except TimeoutError:
-            pass

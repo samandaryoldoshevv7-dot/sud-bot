@@ -38,7 +38,7 @@ Excel hisobotlarni kuzatadi.
 
 | Bo'lim | Nima qiladi |
 |---|---|
-| 👥 Xodimlar | ro'yxat (sahifalash), qidirish, tasdiqlash/faollashtirish/o'chirish, profil, statistika, zaif/kuchli mavzular, **xato javoblar** tarixi |
+| 👥 Xodimlar | ro'yxat (sahifalash), qidirish, tasdiqlash, **🗑 o'chirish** (ro'yxatdan yo'qoladi, natijalari hisobotda qoladi; «🗑 O'chirilganlar»dan qayta tiklash yoki ❌ butunlay o'chirish), profil, statistika, zaif/kuchli mavzular, **xato javoblar** tarixi |
 | 📚 Materiallar | PDF / DOCX / TXT / MD fayl yoki nusxalangan matn yuklash; avtomatik ajratish → tozalash → bo'laklash → embedding; holat UPLOADED/PROCESSING/READY/FAILED; xato sababi; AI bilan savol yaratish; arxivlash/o'chirish |
 | 📰 Yangiliklar | sarlavha, matn, sana, manba, toifa, faol/nofaol; testlarda manba sifatida (masalan 30%) |
 | 📝 Testlar | Usta: nom, tavsif, savollar soni, variantlar (3–5), qiyinlik, manbalar, yangiliklar %, mavzu, **qayerda ishlanadi (guruhda yoki shaxsiy chatda)**, boshlanish, muddat, aralashtirish, javoblarni ko'rsatish rejimi (darhol / test oxirida / ko'rsatilmaydi), o'tish bali. **⚡ Tezkor test**: material sahifasidan bir bosishda. Hayot sikli: **DRAFT → READY → ACTIVE → EXPIRED / CLOSED** |
@@ -68,8 +68,7 @@ Asosiy rejim: test **Telegram guruhining o'zida** ishlanadi (veb-sayt yoki web-a
    **[▶️ TESTNI BOSHLASH]**. So'ng har bir savolni alohida xabar qilib yuboradi:
 
    ```
-   ━━━━━━━━━━━━━━━━
-   📝 1 / 20
+   📝 Savol 1 / 20
    Ma'muriy sudga murojaat qilish muddati qaysi?
 
    A) 10 kun
@@ -77,23 +76,27 @@ Asosiy rejim: test **Telegram guruhining o'zida** ishlanadi (veb-sayt yoki web-a
    C) 3 oy
    D) 6 oy
 
-   Javobni tanlang 👇
-   👥 Javob berdi: 12
    ━━━━━━━━━━━━━━━━
+   👇 Javobni tanlang. Tanlovingizni faqat siz ko'rasiz, javobni o'zgartirib bo'lmaydi.
           [A] [B] [C] [D]
    ```
-   Tugmalarda faqat harflar; variantlarning to'liq matni xabarning o'zida.
-3. Xodim tugmani bosadi → javob bazaga yoziladi. Natija **faqat unga** ko'rinadigan oynada chiqadi
+   Tugmalarda faqat harflar; variantlarning to'liq matni xabarning o'zida. Guruhda ovoz berishga
+   o'xshash hisoblagich yoki foizlar **yo'q** — kim nima tanlagani faqat admin panelida.
+3. Xodim tugmani bosadi → javob bazaga yoziladi. Natija **faqat unga** ko'rinadi
    (guruhdagilar boshqa odamning javobini ko'rmaydi):
-   * «darhol» rejimi: `❌ Javob qabul qilindi. Sizning javobingiz: B. To'g'ri javob: C`;
-   * «test oxirida» rejimi: `✅ Javobingiz qabul qilindi.` — to'g'ri javob ko'rsatilmaydi.
+   * «darhol» rejimi: qalqib chiquvchi oynada `✅ TO'G'RI JAVOB!` yoki
+     `❌ NOTO'G'RI JAVOB … To'g'ri javob: C — 3 oy`, va bot shaxsiy chatga **to'liq javob kartasini**
+     yuboradi: variantlar ✅/❌ belgilari bilan, «💡 Nima uchun?» — to'liq izoh (qisqartirilmagan) va
+     manba. Botni hali ochmagan xodimga «Izohni olish uchun botga /start yozing» deb aytiladi;
+   * «test oxirida» rejimi: `✅ Javobingiz qabul qilindi.` — to'g'ri javob test yakunida ko'rsatiladi.
+   Shaxsiy chatda test yechilganda ham xuddi shu karta savol xabarining o'rnida chiqadi.
 4. **Bir savol = bitta javob.** Qayta bosilsa: `⚠️ Bu savolga siz allaqachon javob bergansiz.`
    Bu baza darajasida ham kafolatlangan: `UNIQUE (user_id, test_id, test_question_id)`, xodimning
    urinish qatorini `FOR UPDATE` bilan bloklash, `user_answers` jadvalida UPDATE'ni taqiqlovchi trigger.
 5. 24 soat (yoki belgilangan muddat) davomida istalgan xodim qo'shilishi mumkin. Muddat tugagach
    (server vaqti, `now >= end_at`) javoblar qabul qilinmaydi, test avtomatik **EXPIRED** bo'ladi,
-   har bir savol xabari so'rovnomaga o'xshash **yakuniy natijaga** aylanadi (har variant bo'yicha
-   foiz; ruxsat bo'lsa to'g'ri javob ✅ bilan) va guruhga yakuniy xabar chiqadi.
+   har bir savol xabarida (ruxsat bo'lsa) to'g'ri javob ✅ bilan va «💡 Nima uchun?» izohi ochiladi,
+   guruhga yakuniy xabar chiqadi. Foizlar va taqsimot faqat admin panel va hisobotlarda.
 
 **Yangi a'zolar.** Telegram guruh sozlamasida «Chat history for new members» = **Hidden** bo'lsa,
 yangi qo'shilganlar o'zlaridan oldingi xabarlarni (test savollarini) ko'rmaydi. Shuning uchun:
@@ -117,8 +120,7 @@ Shaxsiy chat rejimida esa har bir xodim uchun alohida aralashtiriladi.
 
 **Ko'p foydalanuvchi:** har bir xodimning alohida urinish qatori bor, holat faqat PostgreSQL'da;
 50/100/500 kishi bir vaqtda javob berishi mumkin (testda 40 kishi bir vaqtda + bir kishining
-ikki marta bosishi tekshirilgan). «👥 Javob berdi» hisoblagichlari Telegram limitlariga mos ravishda
-fonda (20 soniyada bir) yangilanadi.
+ikki marta bosishi tekshirilgan).
 
 **Avtomatik savollar:** material yuklanishi bilan bot undan avtomatik savollar tuzadi (soni:
 ⚙️ Sozlamalar → «🧠 Avto-savollar soni», standart 20) va **⚡ Shu materialdan test tuzish**
@@ -273,7 +275,7 @@ WEBHOOK_SECRET=<uzun tasodifiy satr>
 3. Guruhda botni **administrator** qiling (tavsiya etiladi) — shunda a'zo qo'shilishi/chiqishi
    (`chat_member`) ham kuzatiladi. Guruhda botga kerakli huquqlar:
    * ✅ **Send messages** — sarlavha va savollarni yuborish;
-   * ✅ **Edit messages** — «👥 Javob berdi» hisoblagichi va yakuniy natijalar (botning o'z xabarlari);
+   * ✅ **Edit messages** — test yakunida savollarga to'g'ri javob va izohni ochish (botning o'z xabarlari);
    * ➖ Delete messages — shart emas;
    * ➖ Manage polls — **talab qilinmaydi** (native poll ishlatilmaydi, custom inline keyboard).
    Guruh egasi botni oddiy a'zo qilib qo'shsa ham test ishlaydi, faqat a'zolar ro'yxatini kuzatish

@@ -209,3 +209,62 @@ async def test_deep_link_unknown_test_is_safe(tg, session_maker, payload):
     s = await tg(message_update(5000, payload))
     assert s.texts()
     assert not any("Kutilmagan xatolik" in t for t in s.texts())
+
+
+async def test_private_answer_shows_verdict_and_full_explanation(tg, session_maker):
+    from app.models import TestQuestion
+
+    async with session_maker() as session:
+        mid = await make_material_with_text(session_maker)
+        await make_question(session, text_="Apellyatsiya shikoyati qancha muddatda beriladi?", material_id=mid,
+                            correct="B")  # fmt: skip
+        test = await make_test(session, question_count=1, answer_reveal="immediate")
+        await tb.assemble_questions(session_maker, test.id, None)
+        await tb.mark_ready(session, test.id)
+        await tb.publish(session, test.id)
+        await make_employee(session, 4100, "Izoh Oluvchi")
+        test_id = test.id
+    s = await tg(callback_update(4100, EmpCB(a="start", id=test_id).pack()))
+    async with session_maker() as session:
+        attempt = (await session.execute(select(TestAttempt).where(TestAttempt.test_id == test_id))).scalar_one()
+        item = attempt.layout[0]
+        tq = await session.get(TestQuestion, item["tq"])
+        correct = original_to_display(item, tq.correct_option)
+        explanation = tq.explanation
+    wrong = next(x for x in "ABCD" if x != correct)
+    s.clear()
+    await tg(callback_update(4100, AnsCB(at=attempt.id, pos=0, o=wrong).pack()))
+    card = next(t for t in s.texts() if "NOTO'G'RI JAVOB" in t)
+    assert "Nima uchun?" in card and explanation in card and "Savol <b>1/1</b>" in card
+    assert f"✅ <b>{correct})</b>" in card and f"❌ <b>{wrong})</b>" in card
+
+
+async def test_admin_removes_and_erases_employee(tg, session_maker):
+    async with session_maker() as session:
+        emp = await make_employee(session, 4200, "Ketadigan Xodim")
+        await make_employee(session, 4201, "Qoladigan Xodim")
+        emp_id = emp.id
+    s = await tg(callback_update(ADMIN, AdminCB(s="emp_v", id=emp_id, v="all").pack()))
+    buttons = [b.text for row in s.last_markup().inline_keyboard for b in row]
+    assert "🗑 Xodimni o'chirish" in buttons and not any("Kirishni" in b for b in buttons)
+    s.clear()
+    await tg(callback_update(ADMIN, AdminCB(s="emp_rm", id=emp_id, v="all").pack()))
+    assert any("o'chirilsinmi" in t for t in s.texts())
+    s.clear()
+    await tg(callback_update(ADMIN, AdminCB(s="emp_rm_go", id=emp_id, v="all").pack()))
+    assert any("ro'yxatdan o'chirildi" in a for a in s.alerts())
+    page = "\n".join(s.texts()) + str(s.last_markup())
+    assert "Ketadigan" not in page and "Qoladigan" in page  # gone from the employee list
+    assert any("huquqingiz o'chirildi" in t for t in (m.text for m in s.sent_to(4200)))
+    # The removed employee cannot take tests any more.
+    async with session_maker() as session:
+        assert (await session.get(User, emp_id)).status == UserStatus.INACTIVE
+    # Permanent deletion from the archive.
+    s.clear()
+    await tg(callback_update(ADMIN, AdminCB(s="emp_l", v="inactive").pack()))
+    assert "Ketadigan" in str(s.last_markup())
+    s.clear()
+    await tg(callback_update(ADMIN, AdminCB(s="emp_er_go", id=emp_id).pack()))
+    assert any("butunlay o'chirildi" in a for a in s.alerts())
+    async with session_maker() as session:
+        assert await session.get(User, emp_id) is None

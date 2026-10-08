@@ -6,7 +6,7 @@ import logging
 from dataclasses import dataclass
 
 from aiogram.types import User as TgUser
-from sqlalchemy import Select, func, or_, select, update
+from sqlalchemy import Select, delete, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -107,6 +107,8 @@ def _filtered(stmt: Select, flt: UserFilter) -> Select:
     stmt = stmt.where(User.role == UserRole.EMPLOYEE)
     if flt.status in ("active", "pending", "inactive"):
         stmt = stmt.where(User.status == UserStatus(flt.status))
+    else:  # removed employees live only in their own archive list
+        stmt = stmt.where(User.status != UserStatus.INACTIVE)
     q = flt.query.strip()
     if q:
         conditions = [
@@ -139,8 +141,20 @@ async def employee_counts(session: AsyncSession) -> dict[str, int]:
     counts = {s.value: 0 for s in UserStatus}
     for status, n in rows:
         counts[status.value] = n
-    counts["total"] = sum(counts.values())
+    counts["total"] = counts["active"] + counts["pending"]  # removed employees are not counted
     return counts
+
+
+async def delete_permanently(session: AsyncSession, user_id: int) -> bool:
+    """Erase an employee with everything tied to them (attempts, answers, memberships cascade)."""
+    user = await session.get(User, user_id)
+    if user is None or user.role == UserRole.ADMIN:
+        return False
+    session.expunge(user)
+    await session.execute(delete(User).where(User.id == user_id))
+    await session.commit()
+    logger.info("Employee deleted permanently", extra={"user_id": user_id})
+    return True
 
 
 async def user_groups(session: AsyncSession, user_id: int) -> list[Group]:

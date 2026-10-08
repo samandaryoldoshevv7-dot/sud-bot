@@ -10,7 +10,7 @@ from aiogram.types import CallbackQuery, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.handlers.formatting import (
-    answered_question_text,
+    answer_card,
     corrections_text,
     employee_test_card,
     question_text,
@@ -231,20 +231,21 @@ async def cb_answer(
         return
 
     await callback.answer()
-    try:
-        await message.edit_text(
-            answered_question_text(
-                message.html_text or "",
-                result.selected_display or callback_data.o,
-                test.answer_reveal,
-                result.is_correct,
-                result.correct_display,
-                result.question,
-            ),
-            reply_markup=None,
-        )
-    except TelegramBadRequest as exc:
-        logger.debug("Could not edit answered question", extra={"error": str(exc)[:100]})
+    item = attempt.layout[callback_data.pos] if callback_data.pos < len(attempt.layout) else None
+    if result.question is not None and item is not None:
+        header = [
+            f"📝 <b>{esc(truncate(test.title, 80))}</b>",
+            t("emp.question.header", n=callback_data.pos + 1, total=attempt.total_questions),
+            "",
+        ]
+        try:
+            await message.edit_text(
+                answer_card(header, result.question, list(item["opts"]),
+                            result.selected_display or callback_data.o, test.answer_reveal),
+                reply_markup=None,
+            )  # fmt: skip
+        except TelegramBadRequest as exc:
+            logger.debug("Could not edit answered question", extra={"error": str(exc)[:100]})
 
     if result.finished:
         await send_result(message, session, test, attempt)
