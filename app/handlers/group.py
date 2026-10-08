@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import time
 
 from aiogram import Bot, F, Router
 from aiogram.filters import JOIN_TRANSITION, LEAVE_TRANSITION, ChatMemberUpdatedFilter, Command
@@ -17,7 +18,8 @@ from app.services import groups as group_service
 from app.services.group_tests import GroupAnswerCode
 from app.services.notifications import deep_link, notify_admins
 from app.services.users import is_admin_telegram_id, upsert_user
-from app.utils.text import esc
+from app.utils.text import esc, truncate
+from app.utils.time import fmt_dt
 
 logger = logging.getLogger(__name__)
 router = Router(name="group")
@@ -37,9 +39,72 @@ async def cmd_register(message: Message, session: AsyncSession, bot: Bot, is_adm
 
 
 @router.message(Command("start", "test"))
-async def cmd_start_in_group(message: Message, bot: Bot) -> None:
+async def cmd_start_in_group(message: Message, bot: Bot, session: AsyncSession) -> None:
+    tests = await group_tests.active_group_tests(session, message.chat.id)
+    if tests:
+        await message.reply(await _active_tests_text(tests), reply_markup=await _active_tests_kb(bot, tests))
+        return
     link = await deep_link(bot, "group")
     await message.reply(t("group.open_private"), reply_markup=kb([(t("group.btn.open_bot"), link)]))
+
+
+async def _active_tests_text(tests) -> str:
+    lines = [t("group.active_tests")]
+    for test in tests:
+        lines.append(
+            t("group.active_test_line", title=esc(test.title), n=test.question_count, end=fmt_dt(test.deadline_at))
+        )
+    lines.append("")
+    lines.append(t("group.active_tests_hint"))
+    return "\n".join(lines)
+
+
+async def _active_tests_kb(bot: Bot, tests):
+    rows = []
+    for test in tests[:5]:
+        rows.append(
+            [(t("group.btn.take_in_bot", title=truncate(test.title, 30)), await deep_link(bot, f"test_{test.id}"))]
+        )
+    return kb(*rows)
+
+
+# A join can arrive both as a chat_member update and as a service message: greet only once.
+_greeted: dict[tuple[int, int], float] = {}
+GREET_TTL = 600.0
+
+
+async def greet_new_member(bot: Bot, session: AsyncSession, chat_id: int, member) -> None:
+    """Tell a new member about running tests (they may not see older group messages)."""
+    now = time.monotonic()
+    for key, ts in list(_greeted.items()):
+        if now - ts > GREET_TTL:
+            del _greeted[key]
+    key = (chat_id, member.id)
+    if key in _greeted:
+        return
+    tests = await group_tests.active_group_tests(session, chat_id)
+    if not tests:
+        return
+    _greeted[key] = now
+    name = esc(member.full_name or member.first_name or "")
+    text = t("group.welcome_new_member", name=name) + "\n\n" + await _active_tests_text(tests)
+    try:
+        await bot.send_message(chat_id, text, reply_markup=await _active_tests_kb(bot, tests))
+    except Exception as exc:
+        logger.warning("Could not greet new member", extra={"chat_id": chat_id, "error": str(exc)[:200]})
+
+
+@router.message(F.new_chat_members)
+async def on_new_members(message: Message, session: AsyncSession, bot: Bot) -> None:
+    group = await group_service.get_by_chat(session, message.chat.id)
+    if group is None or not group.is_active:
+        return
+    for member in message.new_chat_members or []:
+        if member.is_bot:
+            continue
+        user = await upsert_user(session, member)
+        await group_service.mark_membership(session, group, user, True)
+        await greet_new_member(bot, session, message.chat.id, member)
 
 
 @router.message(F.migrate_to_chat_id)
@@ -80,12 +145,13 @@ async def bot_removed(event: ChatMemberUpdated, session: AsyncSession) -> None:
 
 
 @router.chat_member(ChatMemberUpdatedFilter(member_status_changed=JOIN_TRANSITION))
-async def member_joined(event: ChatMemberUpdated, session: AsyncSession) -> None:
+async def member_joined(event: ChatMemberUpdated, session: AsyncSession, bot: Bot) -> None:
     group = await group_service.get_by_chat(session, event.chat.id)
     member = event.new_chat_member.user
     if group and group.is_active and not member.is_bot:
         user = await upsert_user(session, member)
         await group_service.mark_membership(session, group, user, True)
+        await greet_new_member(bot, session, event.chat.id, member)
 
 
 @router.chat_member(ChatMemberUpdatedFilter(member_status_changed=LEAVE_TRANSITION))

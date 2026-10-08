@@ -21,7 +21,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import (
     AttemptStatus,
-    DeliveryMode,
     Group,
     GroupMember,
     QuestionOption,
@@ -48,7 +47,6 @@ class StartError(str, Enum):
     NOT_IN_GROUP = "not_in_group"
     ALREADY_COMPLETED = "already_completed"
     NO_QUESTIONS = "no_questions"
-    GROUP_ONLY = "group_only"
 
 
 @dataclass
@@ -145,7 +143,6 @@ async def start_attempt(
     now: datetime | None = None,
     rng: random.Random | None = None,
     layout: list[dict] | None = None,
-    from_group: bool = False,
 ) -> StartResult:
     now = now or utcnow()
     rng = rng or random.SystemRandom()
@@ -172,8 +169,6 @@ async def start_attempt(
         return StartResult(error=StartError.NOT_ACTIVE)
     if now < test.starts_at:
         return StartResult(error=StartError.NOT_STARTED_YET)
-    if test.delivery_mode == DeliveryMode.GROUP and not from_group:
-        return StartResult(error=StartError.GROUP_ONLY)
     if not await user_in_test_audience(session, test, user):
         return StartResult(error=StartError.NOT_IN_GROUP)
 
@@ -227,10 +222,31 @@ async def start_attempt(
     return StartResult(attempt=attempt)
 
 
+async def answered_question_ids(session: AsyncSession, attempt_id: int) -> set[int]:
+    rows = await session.execute(select(UserAnswer.test_question_id).where(UserAnswer.attempt_id == attempt_id))
+    return set(rows.scalars().all())
+
+
+def next_unanswered_index(layout: list[dict], answered: set[int]) -> int:
+    """First layout position without an answer (``len(layout)`` when everything is answered).
+
+    A group test can be answered partly in the group (any order) and continued in the private
+    chat, so "the current question" is always the first unanswered one in the attempt's layout.
+    """
+    for index, item in enumerate(layout):
+        if item["tq"] not in answered:
+            return index
+    return len(layout)
+
+
 async def current_question(session: AsyncSession, attempt: TestAttempt) -> tuple[TestQuestion, dict] | None:
-    if attempt.current_index >= len(attempt.layout):
+    index = next_unanswered_index(attempt.layout, await answered_question_ids(session, attempt.id))
+    if index >= len(attempt.layout):
         return None
-    item = attempt.layout[attempt.current_index]
+    if attempt.current_index != index:
+        attempt.current_index = index
+        await session.commit()
+    item = attempt.layout[index]
     tq = await session.get(TestQuestion, item["tq"])
     if tq is None:
         return None
@@ -262,7 +278,8 @@ async def submit_answer(
         await finalize_attempt(session, attempt, AttemptStatus.EXPIRED, now)
         await session.commit()
         return AnswerResult(AnswerOutcome.EXPIRED, attempt=attempt, finished=True)
-    if position != attempt.current_index or position >= len(attempt.layout):
+    answered = await answered_question_ids(session, attempt.id)
+    if position != next_unanswered_index(attempt.layout, answered) or position >= len(attempt.layout):
         await session.commit()
         return AnswerResult(AnswerOutcome.DUPLICATE, attempt=attempt)
 
@@ -299,8 +316,9 @@ async def submit_answer(
     attempt.answered_count += 1
     attempt.correct_count += int(is_correct)
     attempt.incorrect_count += int(not is_correct)
-    attempt.current_index = position + 1
-    finished = attempt.current_index >= len(attempt.layout)
+    answered.add(tq.id)
+    attempt.current_index = next_unanswered_index(attempt.layout, answered)
+    finished = attempt.answered_count >= attempt.total_questions
     if finished:
         await finalize_attempt(session, attempt, AttemptStatus.COMPLETED, now)
     try:
