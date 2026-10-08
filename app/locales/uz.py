@@ -456,6 +456,7 @@ TEXTS: dict[str, str] = {
     "mat.detail.questions": "Savollar: ✅ {approved} | 🟡 {pending} | ❌ {rejected}",
     "mat.detail.active": "Faol: {a}",
     "mat.detail.error": "❌ Xato: {error}",
+    "mat.error_detail": "🔧 Texnik sabab: <code>{d}</code>",
     "doc_error.unsupported_type": "Fayl turi qo'llab-quvvatlanmaydi. Faqat PDF, DOCX, TXT, MD.",
     "doc_error.unsupported_doc": "Eski .doc/.rtf/.odt formati qo'llab-quvvatlanmaydi. Faylni DOCX yoki PDF formatida saqlab yuboring.",
     "doc_error.too_large_file": "Fayl hajmi juda katta (maks. {mb} MB).",
