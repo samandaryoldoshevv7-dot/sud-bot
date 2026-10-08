@@ -323,6 +323,53 @@ async def _process_and_report(
         await _generate_to_bank(session_maker, bot, material_id, count, status_msg.chat.id, status_msg.message_id)
 
 
+async def download_material(bot: Bot, material: Material) -> Path | None:
+    """Fetch the original file again from Telegram (None: pasted text, or the download failed)."""
+    if not material.telegram_file_id or material.file_type == FileType.TEXT:
+        return None
+    fd, name = tempfile.mkstemp(prefix="material_", suffix=f".{material.file_type.value}")
+    os.close(fd)
+    path = Path(name)
+    try:
+        await bot.download(material.telegram_file_id, destination=path)
+    except Exception as exc:
+        logger.warning("Re-download failed; using stored text", extra={"error": str(exc)[:200]})
+        path.unlink(missing_ok=True)
+        return None
+    return path
+
+
+async def resume_interrupted_materials(bot: Bot, session_maker: async_sessionmaker[AsyncSession]) -> int:
+    """At startup: finish materials whose processing was cut off by a restart and tell the admins."""
+    from app.services.notifications import notify_admins
+
+    async with session_maker() as session:
+        ids = await material_service.interrupted_material_ids(session)
+    for material_id in ids:
+        async with session_maker() as session:
+            material = await session.get(Material, material_id)
+            if material is None:
+                continue
+            title = material.title
+            path = await download_material(bot, material)
+            if path is None and material.file_type != FileType.TEXT:
+                await material_service._mark_failed(session, material_id, "download_failed", "")
+                await notify_admins(bot, t("mat.resume_failed", title=esc(title)),
+                                    kb([(t("mat.btn.open"), AdminCB(s="mat_v", id=material_id))]))  # fmt: skip
+                continue
+        try:
+            result = await material_service.process_material(session_maker, material_id, path)
+        finally:
+            if path is not None:
+                path.unlink(missing_ok=True)
+        key = "mat.resumed_ok" if result.ok else "mat.resume_failed"
+        await notify_admins(
+            bot, t(key, title=esc(title)), kb([(t("mat.btn.open"), AdminCB(s="mat_v", id=material_id))])
+        )
+        logger.info("Interrupted material processed again", extra={"material_id": material_id, "ok": result.ok})
+    return len(ids)
+
+
 async def render_material(target, session: AsyncSession, material_id: int, page: int = 0) -> None:
     material = await session.get(Material, material_id)
     if material is None:
@@ -346,6 +393,8 @@ async def render_material(target, session: AsyncSession, material_id: int, page:
     ]
     if material.description:
         lines += ["", esc(truncate(material.description, 500))]
+    if material.status in (MaterialStatus.UPLOADED, MaterialStatus.PROCESSING):
+        lines += ["", t("mat.detail.processing_hint")]
     if material.status == MaterialStatus.FAILED and material.error_message:
         code = material.error_message.split(":", 1)[0]
         lines += ["", t("mat.detail.error", error=doc_error_text(code))]
@@ -354,7 +403,9 @@ async def render_material(target, session: AsyncSession, material_id: int, page:
         rows.append([(t("mat.btn.quick_test"), AdminCB(s="mat_qt", id=material.id))])
         rows.append([(t("mat.btn.generate"), AdminCB(s="mat_gen", id=material.id))])
         rows.append([(t("mat.btn.questions"), AdminCB(s="qb_mat", id=material.id))])
-    if material.status in (MaterialStatus.FAILED, MaterialStatus.READY, MaterialStatus.UPLOADED):
+    if material.status in (MaterialStatus.FAILED, MaterialStatus.READY, MaterialStatus.UPLOADED) or (
+        material_service.is_stale(material)
+    ):
         rows.append([(t("mat.btn.reprocess"), AdminCB(s="mat_re", id=material.id))])
     rows.append(
         [
@@ -382,23 +433,13 @@ async def cb_reprocess(
     if material is None:
         await callback.answer(t("common.not_found"), show_alert=True)
         return
-    if material.status == MaterialStatus.PROCESSING:
+    if material.status == MaterialStatus.PROCESSING and not material_service.is_stale(material):
         await callback.answer(t("mat.already_processing"), show_alert=True)
         return
     await callback.answer()
     assert isinstance(callback.message, Message)
     status_msg = await callback.message.answer(t("mat.processing_started"))
-    tmp_path: Path | None = None
-    if material.telegram_file_id and material.file_type != FileType.TEXT:
-        fd, name = tempfile.mkstemp(prefix="material_", suffix=f".{material.file_type.value}")
-        os.close(fd)
-        tmp_path = Path(name)
-        try:
-            await bot.download(material.telegram_file_id, destination=tmp_path)
-        except Exception as exc:
-            logger.warning("Re-download failed; using stored text", extra={"error": str(exc)[:200]})
-            tmp_path.unlink(missing_ok=True)
-            tmp_path = None
+    tmp_path = await download_material(bot, material)
     background.spawn(
         _process_and_report(session_maker, bot, material.id, tmp_path, status_msg.chat.id, status_msg.message_id),
         name=f"reprocess-material-{material.id}",
