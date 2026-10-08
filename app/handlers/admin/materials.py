@@ -654,12 +654,12 @@ async def cb_quick_test_target(callback: CallbackQuery, callback_data: AdminCB, 
         [
             (
                 t("wiz.in_group", g=truncate(g.title, 36), n=members),
-                AdminCB(s="mat_qt_go", id=callback_data.id, v=f"{n}:{g.id}"),
+                AdminCB(s="mat_qt_go", id=callback_data.id, v=f"{n}-{g.id}"),
             )
         ]
         for g, members in groups
     ]
-    rows.append([(t("wiz.private_mode"), AdminCB(s="mat_qt_go", id=callback_data.id, v=f"{n}:0"))])
+    rows.append([(t("wiz.private_mode"), AdminCB(s="mat_qt_go", id=callback_data.id, v=f"{n}-0"))])
     rows.append(back_menu_row("mat_qt", id_=callback_data.id))
     await show(callback, t("mat.quick_test_where"), kb(*rows))
 
@@ -674,7 +674,7 @@ async def cb_quick_test_create(
     from app.utils.time import utcnow
 
     material = await session.get(Material, callback_data.id)
-    count_s, _, group_s = callback_data.v.partition(":")
+    count_s, _, group_s = callback_data.v.partition("-")
     if material is None or not count_s.isdigit():
         await callback.answer(t("common.not_found"), show_alert=True)
         return
