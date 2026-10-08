@@ -16,6 +16,7 @@ from app.handlers.formatting import (
     question_text,
     result_text,
 )
+from app.handlers.test_listing import available_tests_view
 from app.keyboards.callbacks import AnsCB, EmpCB
 from app.keyboards.common import kb
 from app.keyboards.employee import answer_kb
@@ -75,31 +76,18 @@ async def send_test_card(message: Message, session: AsyncSession, user: User, te
 
 
 @router.message(F.text == t("emp.btn.my_tests"))
-async def my_tests(message: Message, session: AsyncSession, user: User | None, is_admin: bool) -> None:
+async def my_tests(message: Message, session: AsyncSession, bot: Bot, user: User | None, is_admin: bool) -> None:
     if not _can_use(user, is_admin):
         await message.answer(
             t("register.pending") if user and user.status == UserStatus.PENDING else t("start.inactive")
         )
         return
     assert user is not None
-    items = await attempt_service.available_tests_for_user(session, user)
-    if not items:
+    view = await available_tests_view(bot, session, user)
+    if view is None:
         await message.answer(t("emp.no_tests"))
         return
-    rows = []
-    lines = [t("emp.my_tests.title"), ""]
-    for test, attempt in items:
-        if attempt is None:
-            mark = "🆕"
-        elif attempt.status == AttemptStatus.IN_PROGRESS:
-            mark = "⏳"
-        elif attempt.status == AttemptStatus.COMPLETED:
-            mark = "✅"
-        else:
-            mark = "⌛"
-        lines.append(f"{mark} <b>{esc(test.title)}</b> — {t('emp.my_tests.deadline', d=fmt_dt(test.deadline_at))}")
-        rows.append([(f"{mark} {truncate(test.title, 40)}", EmpCB(a="card", id=test.id))])
-    await message.answer("\n".join(lines), reply_markup=kb(*rows))
+    await message.answer(view[0], reply_markup=view[1])
 
 
 @router.message(F.text == t("emp.btn.my_results"))

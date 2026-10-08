@@ -19,7 +19,7 @@ from aiogram.methods import (
     SendMessage,
     TelegramMethod,
 )
-from aiogram.types import Chat, ChatMemberLeft, Message, Update, User
+from aiogram.types import Chat, ChatMemberLeft, ChatMemberMember, Message, Update, User
 
 _ids = itertools.count(1000)
 
@@ -28,6 +28,7 @@ class RecordingSession(BaseSession):
     def __init__(self) -> None:
         super().__init__()
         self.requests: list[TelegramMethod] = []
+        self.member_ids: set[int] = set()  # users getChatMember reports as group members
 
     async def make_request(self, bot: Bot, method: TelegramMethod, timeout: int | None = None) -> Any:
         self.requests.append(method)
@@ -53,7 +54,10 @@ class RecordingSession(BaseSession):
                 text=method.text,
             )
         if isinstance(method, GetChatMember):
-            return ChatMemberLeft(user=User(id=int(method.user_id), is_bot=False, first_name="x"))
+            member_user = User(id=int(method.user_id), is_bot=False, first_name="x")
+            if int(method.user_id) in self.member_ids:
+                return ChatMemberMember(user=member_user)
+            return ChatMemberLeft(user=member_user)
         if isinstance(method, (AnswerCallbackQuery, EditMessageReplyMarkup, DeleteMessage)):
             return True
         return True

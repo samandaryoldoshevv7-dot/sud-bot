@@ -62,12 +62,21 @@ async def try_auto_approve(bot: Bot, session: AsyncSession, user: User) -> bool:
     return False
 
 
-async def show_home(message: Message, user: User, is_admin: bool) -> None:
+async def show_home(
+    message: Message, user: User, is_admin: bool, bot: Bot | None = None, session: AsyncSession | None = None
+) -> None:
     if is_admin:
         await message.answer(t("start.admin", name=user_line(user)), reply_markup=employee_reply_kb(is_admin=True))
         await message.answer(t("admin.menu.title"), reply_markup=admin_main_kb())
         return
     await message.answer(t("start.employee", name=user_line(user)), reply_markup=employee_reply_kb())
+    if bot is not None and session is not None:
+        # Show running tests right away (a new employee should not have to look for them).
+        from app.handlers.test_listing import available_tests_view
+
+        view = await available_tests_view(bot, session, user)
+        if view is not None:
+            await message.answer(view[0], reply_markup=view[1])
 
 
 @router.message(CommandStart())
@@ -102,8 +111,19 @@ async def cmd_start(
     if user.status == UserStatus.PENDING and not await try_auto_approve(bot, session, user):
         await message.answer(t("register.pending"))
         return
-    await show_home(message, user, is_admin)
+    await _home_with_tests(message, state, session, bot, user, is_admin)
     await _open_pending_test(message, state, session, user)
+
+
+async def _home_with_tests(
+    message: Message, state: FSMContext, session: AsyncSession, bot: Bot, user: User, is_admin: bool
+) -> None:
+    """Home screen; lists running tests unless a deep link already points at a specific one."""
+    pending = str((await state.get_data()).get("pending_test") or "")
+    if pending.isdigit():
+        await show_home(message, user, is_admin)
+    else:
+        await show_home(message, user, is_admin, bot, session)
 
 
 async def _open_pending_test(message: Message, state: FSMContext, session: AsyncSession, user: User) -> None:
@@ -132,7 +152,7 @@ async def registration_name(
     await state.set_data({"pending_test": data.get("pending_test")})
     if await try_auto_approve(bot, session, user):
         await message.answer(t("register.approved"))
-        await show_home(message, user, is_admin)
+        await _home_with_tests(message, state, session, bot, user, is_admin)
         await _open_pending_test(message, state, session, user)
         return
     await message.answer(t("register.pending"))
