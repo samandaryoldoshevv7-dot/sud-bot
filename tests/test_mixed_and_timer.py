@@ -545,3 +545,63 @@ async def test_material_that_crashes_the_bot_again_is_not_retried_forever(tg, se
         assert material.status == MaterialStatus.FAILED and material.error_message.startswith("crashed")
         assert await session.get(BotSetting, f"material_resume:{big_id}") is None
     assert any("ikki marta ishdan chiqdi" in m.text for m in tg.session.sent_to(ADMIN))
+
+
+class _RateLimitedLLM(ScriptedLLM):
+    """Answers normally for the first ``ok_calls`` generation calls, then hits a daily limit."""
+
+    def __init__(self, ok_calls: int):
+        super().__init__()
+        self.ok_calls = ok_calls
+
+    async def complete_json(self, messages, **kw):
+        from app.ai.base import AIProviderError
+
+        if "exam author" in messages[0]["content"]:
+            if self.calls.count("generation") >= self.ok_calls:
+                self.calls.append("limited")
+                raise AIProviderError("AI daily rate limit exceeded; retry in 7 min")
+        return await super().complete_json(messages, **kw)
+
+
+async def test_rate_limit_stops_build_quickly_and_resume_reuses_questions(tg, session_maker, monkeypatch):  # noqa: F811
+    """Was: "8/30" for an hour while every request waited on the AI limit."""
+    from app.handlers.admin.create_test import build_and_send, notify_interrupted_tests
+
+    ids = await _materials(session_maker)
+    async with session_maker() as session:
+        admin = await make_employee(session, ADMIN, "Admin Bosh")
+        now = utcnow()
+        test = await tb.create_test(
+            session,
+            tb.TestDraftData(title="Limitli test", question_count=8, starts_at=now, deadline_at=now + tb.OPEN_WINDOW,
+                             material_ids=ids, answer_reveal="immediate"),
+            admin.id,
+        )  # fmt: skip
+        test_id = test.id
+    limited = _RateLimitedLLM(ok_calls=2)
+    report = await build_mixed_test(
+        session_maker, test_id, lambda: QuestionGenerator(limited, Retriever(HashEmbeddings())), rng=random.Random(1)
+    )
+    assert 0 < report.created < 8 and "rate limit" in report.error
+    assert limited.calls.count("limited") == 1  # stopped at the first limit, no waiting loop
+    # The admin sees why and can continue later; questions made so far are reused.
+    msg = await tg.bot.send_message(ADMIN, "…")
+    import app.handlers.admin.create_test as ct
+
+    monkeypatch.setattr(ct, "make_generator", lambda: QuestionGenerator(ScriptedLLM(), Retriever(HashEmbeddings())))
+    monkeypatch.setattr(ct, "ai_available", lambda: True)
+    tg.session.clear()
+    await build_and_send(session_maker, tg.bot, test_id, ADMIN, msg.message_id)
+    assert any("Test tayyor va yuborildi" in x for x in tg.session.texts())
+    async with session_maker() as session:
+        assert (await session.get(Test, test_id)).status == TestStatus.ACTIVE
+    # After a restart the admins are told which builds stopped, with a continue button.
+    async with session_maker() as session:
+        draft = await make_test(session, title="Uzilgan", question_count=3, material_ids=ids[:1],
+                                use_all_materials=False)  # fmt: skip
+    tg.session.clear()
+    await notify_interrupted_tests(tg.bot, session_maker, [draft.id])
+    sent = tg.session.sent_to(ADMIN)
+    assert sent and "to'xtadi" in sent[0].text
+    assert sent[0].reply_markup.inline_keyboard[0][0].text == "🔄 Davom ettirish"

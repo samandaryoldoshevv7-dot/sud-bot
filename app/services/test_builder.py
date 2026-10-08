@@ -884,8 +884,8 @@ async def source_names(session: AsyncSession, test_id: int) -> list[str]:
     return list(rows.scalars().all())
 
 
-async def reset_stuck_generation(session: AsyncSession) -> int:
-    """On startup, jobs marked RUNNING belong to a previous process that died."""
+async def reset_stuck_generation(session: AsyncSession) -> list[int]:
+    """On startup, jobs marked RUNNING belong to a previous process that died (returns their test ids)."""
     result = await session.execute(
         update(Test)
         .where(Test.generation_status == GenerationStatus.RUNNING)
@@ -894,4 +894,4 @@ async def reset_stuck_generation(session: AsyncSession) -> int:
     )
     ids = list(result.scalars().all())
     await session.commit()
-    return len(ids)
+    return ids

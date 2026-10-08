@@ -154,8 +154,8 @@ class QuestionGenerator:
                 logger.error("AI failure during generation", extra={"chunk_id": seed.id, "error": str(exc)[:300]})
                 result.rejected["ai_error"] += 1
                 result.error = str(exc)[:300]
-                if "authentication" in str(exc).lower() or "unavailable" in str(exc).lower():
-                    break  # retrying other chunks cannot help
+                if any(m in str(exc).lower() for m in ("authentication", "unavailable", "rate limit")):
+                    break  # retrying other chunks cannot help (a rate limit would only make it wait longer)
                 continue
             seed.generation_attempts += 1
             await session.commit()

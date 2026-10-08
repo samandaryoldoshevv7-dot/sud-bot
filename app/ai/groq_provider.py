@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 
 import groq
 from groq import AsyncGroq
@@ -36,12 +37,32 @@ class ModelUnavailableError(AIProviderError):
     """The requested model cannot be used (retired, unknown or not permitted)."""
 
 
-def _retry_after_seconds(exc: groq.RateLimitError) -> float:
+def _raw_retry_after(exc: groq.RateLimitError) -> float:
     try:
-        value = float(exc.response.headers.get("retry-after", "0"))
+        return float(exc.response.headers.get("retry-after", "0"))
     except (TypeError, ValueError, AttributeError):
-        value = 0.0
-    return min(max(value, 5.0), 60.0)
+        return 0.0
+
+
+def _retry_after_seconds(exc: groq.RateLimitError) -> float:
+    return min(max(_raw_retry_after(exc), 5.0), 60.0)
+
+
+def _long_limit_wait(exc: groq.RateLimitError) -> float | None:
+    """Seconds until a DAILY (or otherwise long) limit resets; None for short per-minute limits.
+
+    Waiting minutes for every single request made generation look frozen ("8/30" for an hour),
+    so a long limit is reported at once instead.
+    """
+    text = str(exc).lower()
+    wait = _raw_retry_after(exc)
+    match = re.search(r"try again in (?:(\d+)h)?(?:(\d+)m)?(?:([\d.]+)s)?", text)
+    if match and any(match.groups()):
+        h, m, sec = (float(x) if x else 0.0 for x in match.groups())
+        wait = max(wait, h * 3600 + m * 60 + sec)
+    if "per day" in text or "(tpd)" in text or "(rpd)" in text or wait > 120:
+        return wait
+    return None
 
 
 def _is_model_gone(exc: groq.APIStatusError) -> bool:
@@ -67,7 +88,7 @@ class GroqProvider(LLMProvider):
         self._client = AsyncGroq(
             api_key=settings.groq_api_key.get_secret_value(),  # type: ignore[union-attr]
             timeout=settings.groq_timeout_seconds,
-            max_retries=4,
+            max_retries=2,
         )
         self._unavailable: set[str] = set()
         self._replacement: dict[str, str] = {}
@@ -126,6 +147,11 @@ class GroqProvider(LLMProvider):
             try:
                 return await self._complete(messages, model, temperature, max_tokens)
             except groq.RateLimitError as exc:
+                long_wait = _long_limit_wait(exc)
+                if long_wait is not None:
+                    minutes = max(1, round(long_wait / 60))
+                    logger.warning("Groq daily/long rate limit reached", extra={"minutes": minutes})
+                    raise AIProviderError(f"AI daily rate limit exceeded; retry in {minutes} min") from exc
                 # The SDK already retried with backoff; free-tier token-per-minute limits can need longer.
                 if attempt > RATE_LIMIT_EXTRA_RETRIES:
                     logger.warning("Groq rate limit exhausted after retries")

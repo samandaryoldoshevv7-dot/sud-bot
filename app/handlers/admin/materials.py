@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 import tempfile
 from pathlib import Path
 
@@ -615,6 +616,9 @@ def _friendly_error(error: str) -> str:
         return t("ai.err.auth")
     if "models unavailable" in lowered or "no usable groq model" in lowered:
         return t("ai.err.model")
+    daily = re.search(r"daily rate limit exceeded; retry in (\d+) min", lowered)
+    if daily:
+        return t("ai.err.daily_limit", m=daily.group(1))
     if "rate limit" in lowered:
         return t("ai.err.rate_limit")
     if "unreachable" in lowered:

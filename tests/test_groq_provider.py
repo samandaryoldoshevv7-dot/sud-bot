@@ -37,6 +37,12 @@ async def groq_server(unused_tcp_port_factory=None):
                 },
                 status=400,
             )
+        if state["mode"] == "daily":
+            message = (
+                "Rate limit reached for model `openai/gpt-oss-120b` on tokens per day (TPD): Limit 200000, "
+                "Used 199500, Requested 2100. Please try again in 7m12.5s."
+            )
+            return web.json_response({"error": {"message": message}}, status=429, headers={"retry-after": "433"})
         if state["mode"] == "ratelimit" and state["calls"] == 1:
             return web.json_response({"error": {"message": "Rate limit"}}, status=429, headers={"retry-after": "0"})
         content = json.dumps({"supported": True, "explanation": "Manbaga ko'ra shunday."})
@@ -113,3 +119,15 @@ async def test_all_models_retired_gives_clear_error(groq_server):
     state["mode"] = "all_retired"
     with pytest.raises(AIProviderError, match="unavailable"):
         await structured_call(_provider(url, max_retries=0), "Return JSON", "source", ExplanationResponse)
+
+
+async def test_daily_limit_fails_fast_with_wait_time(groq_server):
+    """A daily limit must not make every request wait (generation looked frozen at "8/30")."""
+    import time
+
+    state, url = groq_server
+    state["mode"] = "daily"
+    started = time.monotonic()
+    with pytest.raises(AIProviderError, match="daily rate limit exceeded; retry in 7 min"):
+        await structured_call(_provider(url, max_retries=0), "Return JSON", "source", ExplanationResponse)
+    assert time.monotonic() - started < 5 and state["calls"] == 1
