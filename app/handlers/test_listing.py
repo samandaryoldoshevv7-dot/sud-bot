@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.keyboards.callbacks import EmpCB
 from app.keyboards.common import kb
 from app.locales import t
-from app.models import AttemptStatus, Group, GroupMember, Test, TestStatus, User
+from app.models import AttemptStatus, Group, GroupMember, GroupTestPost, Test, TestStatus, User
 from app.services import attempts as attempt_service
 from app.services import groups as group_service
 from app.utils.text import esc, truncate
@@ -35,21 +35,19 @@ async def refresh_test_memberships(bot: Bot, session: AsyncSession, user: User) 
             )
         ).scalars()
     )
-    group_ids = (
-        set(
-            (
-                await session.execute(
-                    select(Test.group_id).where(
-                        Test.status == TestStatus.ACTIVE,
-                        Test.starts_at <= now,
-                        Test.deadline_at > now,
-                        Test.group_id.is_not(None),
-                    )
-                )
-            ).scalars()
-        )
-        - known
+    running = (
+        select(Test.id)
+        .where(Test.status == TestStatus.ACTIVE, Test.starts_at <= now, Test.deadline_at > now)
+        .scalar_subquery()
     )
+    targeted = set(
+        (await session.execute(select(Test.group_id).where(Test.id.in_(running), Test.group_id.is_not(None)))).scalars()
+    )
+    # Tests can also be posted into other groups than their target group.
+    posted = set(
+        (await session.execute(select(GroupTestPost.group_id).where(GroupTestPost.test_id.in_(running)))).scalars()
+    )
+    group_ids = (targeted | posted) - known
     for group_id in group_ids:
         group = await session.get(Group, group_id)
         if group is None or not group.is_active:

@@ -200,6 +200,9 @@ TEXTS: dict[str, str] = {
     "gt.alert.blocked": "⛔️ Sizning testda qatnashish huquqingiz o'chirilgan.",
     "gt.alert.pending": "⏳ Avval administrator sizni tasdiqlashi kerak. Botga shaxsiy /start yozing.",
     "gt.alert.invalid": "Bu tugma eskirgan.",
+    "gt.admin_posted_ok": "✅ «{title}» testi «{group}» guruhiga yuborildi. Xodimlar shu yerning o'zida javob berishi mumkin.",
+    "gt.admin_post_failed": "❌ «{title}» testini «{group}» guruhiga yuborib bo'lmadi.\n\nTekshiring: bot guruhda bormi va xabar yozish huquqi bormi (botni guruhga <b>administrator</b> qiling), so'ng test sahifasida «▶️ Guruhda boshlash» ni qayta bosing — bot yuborilmay qolgan savollardan davom ettiradi.",
+    "gt.admin_post_failed_auto": "❌ #{id} testini guruhga yuborib bo'lmadi. Botni guruhga administrator qiling va test sahifasida «▶️ Guruhda boshlash» ni bosing.",
     # ------------------------------------------------------------------ groups (in-group)
     "group.registered": "✅ «{title}» guruhi ro'yxatga olindi. Test e'lonlari shu yerga yuboriladi.",
     "group.reactivated": "✅ «{title}» guruhi qayta faollashtirildi.",
