@@ -56,7 +56,13 @@ from app.models import (
 from app.schemas.ai import LETTERS
 from app.services import groups as group_service
 from app.services import settings_service
-from app.services.attempts import finalize_attempt, get_in_progress, start_attempt
+from app.services.attempts import (
+    answered_question_ids,
+    finalize_attempt,
+    get_in_progress,
+    next_unanswered_index,
+    start_attempt,
+)
 from app.services.users import upsert_user
 from app.utils.text import esc, progress_bar, truncate
 from app.utils.time import fmt_dt, fmt_hours, utcnow
@@ -335,7 +341,7 @@ async def _get_or_start_attempt(
     if attempt is not None:
         return attempt
     result = await start_attempt(session, user, test.id, chat_id=post.chat_id, now=now,
-                                 layout=await _layout(session, post.id), from_group=True)  # fmt: skip
+                                 layout=await _layout(session, post.id))  # fmt: skip
     return result.attempt
 
 
@@ -458,7 +464,9 @@ async def submit_group_answer(
     attempt.answered_count += 1
     attempt.correct_count += int(is_correct)
     attempt.incorrect_count += int(not is_correct)
-    attempt.current_index = attempt.answered_count
+    answered = await answered_question_ids(session, attempt_id)
+    answered.add(tq_id)
+    attempt.current_index = next_unanswered_index(attempt.layout, answered)
     finished = attempt.answered_count >= attempt.total_questions
     if finished:
         await finalize_attempt(session, attempt, AttemptStatus.COMPLETED, now)
@@ -691,6 +699,32 @@ async def resume_unsent_posts(bot: Bot, session_maker: async_sessionmaker[AsyncS
     for post_id in ids:
         await send_post(bot, session_maker, post_id)
     return len(ids)
+
+
+async def group_layout_for_test(session: AsyncSession, test_id: int) -> list[dict] | None:
+    """Layout of the group post (same order and letters as in the group), if the test was posted."""
+    post_id = (
+        await session.execute(select(GroupTestPost.id).where(GroupTestPost.test_id == test_id).limit(1))
+    ).scalar_one_or_none()
+    return await _layout(session, post_id) if post_id is not None else None
+
+
+async def active_group_tests(session: AsyncSession, chat_id: int) -> list[Test]:
+    """ACTIVE tests currently running in this group chat."""
+    now = utcnow()
+    stmt = (
+        select(Test)
+        .join(GroupTestPost, GroupTestPost.test_id == Test.id)
+        .where(
+            GroupTestPost.chat_id == chat_id,
+            GroupTestPost.finalized_at.is_(None),
+            Test.status == TestStatus.ACTIVE,
+            Test.starts_at <= now,
+            Test.deadline_at > now,
+        )
+        .order_by(Test.deadline_at)
+    )
+    return list((await session.execute(stmt)).scalars().all())
 
 
 async def group_tests_due(session: AsyncSession) -> list[int]:

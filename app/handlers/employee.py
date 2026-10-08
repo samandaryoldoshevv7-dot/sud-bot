@@ -22,6 +22,7 @@ from app.keyboards.employee import answer_kb
 from app.locales import t
 from app.models import AnswerReveal, AttemptStatus, DeliveryMode, Test, TestAttempt, TestStatus, User, UserStatus
 from app.services import attempts as attempt_service
+from app.services import group_tests
 from app.services.attempts import AnswerOutcome, StartError
 from app.utils.text import esc, pct, split_message, truncate
 from app.utils.time import fmt_dt
@@ -39,7 +40,6 @@ START_ERRORS = {
     StartError.NOT_IN_GROUP: "emp.start_error.not_in_group",
     StartError.ALREADY_COMPLETED: "emp.start_error.already_completed",
     StartError.NO_QUESTIONS: "emp.start_error.no_questions",
-    StartError.GROUP_ONLY: "emp.start_error.group_only",
 }
 
 
@@ -48,8 +48,6 @@ def _can_use(user: User | None, is_admin: bool) -> bool:
 
 
 def _card_keyboard(test: Test, attempt: TestAttempt | None):
-    if test.delivery_mode == DeliveryMode.GROUP and (attempt is None or attempt.status == AttemptStatus.IN_PROGRESS):
-        return None  # answered inside the group, see the card text
     if attempt is not None and attempt.status == AttemptStatus.IN_PROGRESS:
         return kb([(t("emp.btn.continue_test"), EmpCB(a="start", id=test.id))])
     if attempt is not None and attempt.status in (AttemptStatus.COMPLETED, AttemptStatus.EXPIRED):
@@ -169,7 +167,19 @@ async def cb_start(
     if not _can_use(user, is_admin):
         await callback.answer(t("emp.start_error.user_not_active"), show_alert=True)
         return
-    result = await attempt_service.start_attempt(session, user, callback_data.id, chat_id=callback.message.chat.id)
+    test = await session.get(Test, callback_data.id)
+    layout = None
+    if test is not None and test.delivery_mode == DeliveryMode.GROUP:
+        # Group test continued in the private chat (e.g. new members who cannot see older group
+        # messages): same questions, same letters, same "one answer per question" rule.
+        layout = await group_tests.group_layout_for_test(session, test.id)
+        if test.group_id and not await attempt_service.user_in_test_audience(session, test, user):
+            from app.handlers.common import check_group_membership
+
+            await check_group_membership(bot, session, user)
+    result = await attempt_service.start_attempt(
+        session, user, callback_data.id, chat_id=callback.message.chat.id, layout=layout
+    )
     if result.error is not None:
         await callback.answer(t(START_ERRORS[result.error]), show_alert=True)
         return

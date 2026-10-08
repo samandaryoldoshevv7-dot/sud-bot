@@ -148,8 +148,7 @@ TEXTS: dict[str, str] = {
     "emp.start_error.not_in_group": "⛔️ Bu test boshqa guruh xodimlari uchun.",
     "emp.start_error.already_completed": "✅ Siz bu testni allaqachon topshirgansiz. Qayta topshirishga ruxsat yo'q.",
     "emp.start_error.no_questions": "⚠️ Testda savollar yo'q.",
-    "emp.start_error.group_only": "👥 Bu test guruhning o'zida ishlanadi. Guruhdagi savollarga javob bering.",
-    "emp.test_card.group_mode": "👥 Bu test guruhda ishlanadi: guruhdagi savollar ostidagi A/B/C/D tugmalarini bosing.",
+    "emp.test_card.group_mode": "👥 Bu test guruhda ishlanadi. Savollarni guruhda ko'rmasangiz, shu yerda «▶️ TESTNI BOSHLASH» ni bosing — javoblaringiz o'sha testga yoziladi (har bir savolga bitta javob).",
     "reminder.body": "⏰ <b>Eslatma!</b>\n\n«{title}» testini yakunlash muddati: <b>{deadline}</b>.\nIltimos, testni o'z vaqtida topshiring.",
     "announce.group_header": "📢 <b>YANGI TEST E'LON QILINDI</b>",
     "announce.dm_header": "👋 Assalomu alaykum!\nSiz uchun yangi test mavjud.",
@@ -205,6 +204,11 @@ TEXTS: dict[str, str] = {
     "group.registered": "✅ «{title}» guruhi ro'yxatga olindi. Test e'lonlari shu yerga yuboriladi.",
     "group.reactivated": "✅ «{title}» guruhi qayta faollashtirildi.",
     "group.open_private": "Testlarni topshirish uchun bot bilan shaxsiy chatni oching 👇",
+    "group.active_tests": "📝 <b>Guruhda faol testlar:</b>",
+    "group.active_test_line": "• <b>{title}</b> — {n} ta savol, tugash: {end}",
+    "group.active_tests_hint": "Savollar guruhda yuqoriroqda. Ularni ko'rmasangiz (yangi a'zolar uchun eski xabarlar yashirin bo'lishi mumkin), quyidagi tugma orqali testni bot bilan ishlang — javoblar shu testga yoziladi.",
+    "group.btn.take_in_bot": "▶️ {title} — bot orqali",
+    "group.welcome_new_member": "👋 Xush kelibsiz, {name}!",
     "group.btn.open_bot": "🤖 Botni ochish",
     "group.btn.register": "✅ Ro'yxatga olish",
     "group.added_by_other": "ℹ️ Bot «{title}» guruhiga qo'shildi (ID: <code>{chat_id}</code>).\nUshbu guruhni ro'yxatga olasizmi?",
@@ -463,6 +467,9 @@ TEXTS: dict[str, str] = {
     "tests.btn.preview_short": "👀 Savollarni ko'rish",
     "tests.btn.fill": "🧠 Savollarni yig'ish/yaratish (+{n})",
     "tests.btn.approve_all": "✅ Hammasini tasdiqlash",
+    "tests.btn.shrink": "✂️ Mavjud {n} ta savol bilan davom etish",
+    "tests.btn.shrink_short": "✂️ Mavjud savollar bilan davom etish",
+    "tests.shrunk": "✂️ Test {n} ta savol bilan davom etadi",
     "tests.btn.approve": "✅ Tasdiqlash",
     "tests.btn.reject": "❌ Rad etish",
     "tests.btn.regenerate": "🔄 Qayta yaratish",
@@ -512,7 +519,8 @@ TEXTS: dict[str, str] = {
         "🗂 Bankdan: {bank}\n🧠 Yangi yaratildi: {generated}\n"
         "📚 Materiallardan: {material} | 📰 Yangiliklardan: {news}\n"
         "⚠️ Yetishmayapti: {missing}\n\n"
-        "Endi savollarni ko'rib chiqing va tasdiqlang."
+        "Endi savollarni ko'rib chiqing va tasdiqlang. Savol yetishmasa: yana material yuklang va "
+        "«🧠 Savollarni yig'ish» ni bosing yoki «✂️ Mavjud savollar bilan davom etish» ni tanlang."
     ),
     "tests.assembly_rejected": "🚫 Sifat nazoratidan o'tmagan AI nomzodlari: {n}",
     "tests.review.empty": "Testda hali savollar yo'q.",

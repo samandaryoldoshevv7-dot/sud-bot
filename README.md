@@ -95,6 +95,15 @@ Asosiy rejim: test **Telegram guruhining o'zida** ishlanadi (veb-sayt yoki web-a
    har bir savol xabari so'rovnomaga o'xshash **yakuniy natijaga** aylanadi (har variant bo'yicha
    foiz; ruxsat bo'lsa to'g'ri javob ✅ bilan) va guruhga yakuniy xabar chiqadi.
 
+**Yangi a'zolar.** Telegram guruh sozlamasida «Chat history for new members» = **Hidden** bo'lsa,
+yangi qo'shilganlar o'zlaridan oldingi xabarlarni (test savollarini) ko'rmaydi. Shuning uchun:
+* yangi a'zo qo'shilganda bot guruhda «👋 Xush kelibsiz» va faol testlar ro'yxatini tugma bilan yuboradi;
+* guruhda `/test` buyrug'i faol testlarni ko'rsatadi;
+* tugma bot bilan shaxsiy chatni ochadi va xodim **o'sha testni** shu yerda davom ettiradi (guruhdagi
+  harflar bilan bir xil, javoblar o'sha testga yoziladi, bir savolga bitta javob qoidasi saqlanadi;
+  guruhda javob bergan savollari qayta so'ralmaydi).
+Tavsiya: guruh sozlamalarida **Edit → Chat history for new members → Visible** qiling.
+
 **Nega native Telegram Poll emas?** Native quiz-poll'da natijalar har bir xodimning testdagi
 urinishiga bog'lanmaydi, «faqat test oxirida ko'rsatish» rejimi yo'q, oddiy (quiz bo'lmagan)
 so'rovnomada esa javobni qaytarib olish mumkin. Shuning uchun **custom inline keyboard** ishlatiladi:
@@ -488,7 +497,7 @@ app/
 └── utils/                  # vaqt, matn, structured logging
 migrations/                 # Alembic
 scripts/                    # start.sh, preload_embeddings.py, reembed.py
-tests/                      # pytest (87 test)
+tests/                      # pytest (92 test)
 Dockerfile, railway.json, docker-compose.yml, requirements*.txt, .env.example
 ```
 

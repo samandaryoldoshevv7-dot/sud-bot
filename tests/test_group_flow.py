@@ -308,3 +308,83 @@ async def test_scheduler_starts_group_test_automatically(tg, session_maker):
     assert len(sent) == 3 and "YANGI TEST BOSHLANDI" in sent[0].text
     await run_tick(tg.bot, session_maker)  # idempotent: nothing posted twice
     assert len(tg.session.sent_to(GROUP_CHAT)) == 3
+
+
+async def test_new_member_is_told_about_running_test(tg, session_maker):
+    from datetime import UTC, datetime
+
+    from aiogram.types import Chat, Message, Update, User
+
+    async with session_maker() as session:
+        _test, post, _msgs = await _group_test(session_maker, session, n=2)
+        post_id = post.id
+    await group_tests.send_post(tg.bot, session_maker, post_id)
+    tg.session.clear()
+    newcomer = User(id=9101, is_bot=False, first_name="Yangi", last_name="Xodim")
+    service = Update(
+        update_id=990001,
+        message=Message(
+            message_id=990001, date=datetime.now(UTC), chat=Chat(id=GROUP_CHAT, type="supergroup", title="Sud"),
+            from_user=newcomer, new_chat_members=[newcomer],
+        ),
+    )  # fmt: skip
+    await tg(service)
+    sent = tg.session.sent_to(GROUP_CHAT)
+    assert len(sent) == 1 and "Xush kelibsiz" in sent[0].text and "faol testlar" in sent[0].text
+    url = sent[0].reply_markup.inline_keyboard[0][0].url
+    assert url.endswith(f"start=test_{_test.id}")
+    # The same join arriving again (chat_member update) does not greet twice.
+    await tg(service.model_copy(update={"update_id": 990002}))
+    assert len(tg.session.sent_to(GROUP_CHAT)) == 1
+    # /test in the group lists running tests with bot links.
+    tg.session.clear()
+    from tests.telegram_mock import message_update
+
+    await tg(message_update(9101, "/test", "Yangi", chat_type="supergroup", chat_id=GROUP_CHAT))
+    assert any("faol testlar" in t for t in tg.session.texts())
+
+
+async def test_group_test_can_be_continued_in_private_chat(tg, session_maker):
+    from app.keyboards.callbacks import AnsCB, EmpCB
+    from app.services import settings_service
+
+    async with session_maker() as session:
+        test, post, msgs = await _group_test(session_maker, session, n=3)
+        test_id, post_id, first_gqm = test.id, post.id, msgs[0].id
+        await settings_service.set_value(session, "auto_approve_all", True)
+        user = await make_employee(session, 9201, "Shaxsiy Davom")
+    await group_tests.send_post(tg.bot, session_maker, post_id)
+    # Answer question 1 in the group...
+    await tg(callback_update(9201, GroupAnsCB(m=first_gqm, o="A").pack(), "Shaxsiy", chat_id=GROUP_CHAT))
+    # ...then continue privately: the bot asks question 2 (the first unanswered), not question 1 again.
+    tg.session.clear()
+    await tg(callback_update(9201, EmpCB(a="start", id=test_id).pack(), "Shaxsiy"))
+    assert any("Savol <b>2/3</b>" in t for t in tg.session.texts())
+    async with session_maker() as session:
+        attempt = (await session.execute(select(TestAttempt).where(TestAttempt.user_id == user.id))).scalar_one()
+        attempt_id = attempt.id
+        assert attempt.current_index == 1
+    # Answering question 1 again via a stale private button is rejected; question 2 is accepted.
+    tg.session.clear()
+    await tg(callback_update(9201, AnsCB(at=attempt_id, pos=0, o="B").pack(), "Shaxsiy"))
+    assert any("allaqachon" in a for a in tg.session.alerts())
+    await tg(callback_update(9201, AnsCB(at=attempt_id, pos=1, o="B").pack(), "Shaxsiy"))
+    await tg(callback_update(9201, AnsCB(at=attempt_id, pos=2, o="C").pack(), "Shaxsiy"))
+    assert any("TEST YAKUNLANDI" in t for t in tg.session.texts())
+    async with session_maker() as session:
+        answers = (
+            (
+                await session.execute(
+                    select(UserAnswer).where(UserAnswer.user_id == user.id).order_by(UserAnswer.position)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert [a.position for a in answers] == [0, 1, 2]
+        attempt = await session.get(TestAttempt, attempt_id)
+        assert attempt.status == AttemptStatus.COMPLETED and attempt.answered_count == 3
+    # And the group buttons now say the questions were already answered.
+    tg.session.clear()
+    await tg(callback_update(9201, GroupAnsCB(m=msgs[1].id, o="A").pack(), "Shaxsiy", chat_id=GROUP_CHAT))
+    assert any("allaqachon" in a for a in tg.session.alerts())
