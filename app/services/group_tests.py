@@ -710,18 +710,20 @@ async def group_layout_for_test(session: AsyncSession, test_id: int) -> list[dic
 
 
 async def active_group_tests(session: AsyncSession, chat_id: int) -> list[Test]:
-    """ACTIVE tests currently running in this group chat."""
+    """ACTIVE tests (inside their time window) that members of this group can take.
+
+    Includes tests posted in this group, tests targeted at this group, and tests for all employees
+    (announced in private chats), so new members always learn about every running test.
+    """
     now = utcnow()
+    group_id = (await session.execute(select(Group.id).where(Group.chat_id == chat_id))).scalar_one_or_none()
+    posted = select(GroupTestPost.test_id).where(GroupTestPost.chat_id == chat_id)
+    audience = Test.id.in_(posted) | Test.group_id.is_(None)
+    if group_id is not None:
+        audience = audience | (Test.group_id == group_id)
     stmt = (
         select(Test)
-        .join(GroupTestPost, GroupTestPost.test_id == Test.id)
-        .where(
-            GroupTestPost.chat_id == chat_id,
-            GroupTestPost.finalized_at.is_(None),
-            Test.status == TestStatus.ACTIVE,
-            Test.starts_at <= now,
-            Test.deadline_at > now,
-        )
+        .where(audience, Test.status == TestStatus.ACTIVE, Test.starts_at <= now, Test.deadline_at > now)
         .order_by(Test.deadline_at)
     )
     return list((await session.execute(stmt)).scalars().all())

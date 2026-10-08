@@ -193,6 +193,13 @@ async def cb_set_status(callback: CallbackQuery, callback_data: AdminCB, session
     if previous != status and user.has_private_chat:
         key = "emp_admin.notify_activated" if status == UserStatus.ACTIVE else "emp_admin.notify_deactivated"
         await safe_send(bot, user.telegram_id, t(key))
+        if status == UserStatus.ACTIVE:
+            from app.handlers.test_listing import available_tests_view
+
+            await session.refresh(user)
+            view = await available_tests_view(bot, session, user)
+            if view is not None:
+                await safe_send(bot, user.telegram_id, view[0], view[1])
     await render_profile(callback, session, user.id)
 
 
