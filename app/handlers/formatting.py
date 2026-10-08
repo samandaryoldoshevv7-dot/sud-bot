@@ -6,7 +6,6 @@ from app.locales import t
 from app.models import (
     AnswerReveal,
     AttemptStatus,
-    DeliveryMode,
     Test,
     TestAttempt,
     TestQuestion,
@@ -16,8 +15,8 @@ from app.models import (
 )
 from app.schemas.ai import LETTERS
 from app.services.attempts import displayed_options
-from app.utils.text import esc, pct, progress_bar, truncate
-from app.utils.time import fmt_dt, fmt_duration, fmt_hours, utcnow
+from app.utils.text import esc, pct, truncate
+from app.utils.time import fmt_dt, fmt_hours, fmt_span, utcnow
 
 STATUS_EMOJI = {
     TestStatus.DRAFT: "📝",
@@ -28,111 +27,120 @@ STATUS_EMOJI = {
 }
 
 
-def time_left(test: Test) -> str:
-    seconds = (test.deadline_at - utcnow()).total_seconds()
-    if seconds <= 0:
-        return t("common.expired")
-    return fmt_duration(int(seconds) // 60 * 60)
+def source_line(names: list[str]) -> str:
+    return " + ".join(names)
 
 
-def employee_test_card(test: Test, attempt: TestAttempt | None) -> str:
-    hours = max(1, round((test.deadline_at - test.starts_at).total_seconds() / 3600))
-    lines = [
-        t("emp.test_card.title", title=esc(test.title)),
+def employee_test_card(test: Test, attempt: TestAttempt | None, sources: list[str] | None = None, now=None) -> str:
+    """Test card: name, sources, number of questions, personal time and the employee's state."""
+    now = now or utcnow()
+    lines = [f"📚 <b>{esc(test.title)}</b>"]
+    if sources:
+        lines += ["", esc(source_line(sources))]
+    lines += [
         "",
-        t("emp.test_card.questions", n=test.question_count),
-        t("emp.test_card.duration", duration=fmt_hours(hours)),
-        t("emp.test_card.deadline", deadline=fmt_dt(test.deadline_at), left=time_left(test)),
-        t("emp.test_card.passing", p=test.passing_percent),
+        t("emp.card.questions", n=test.question_count),
+        t("emp.card.duration", d=fmt_hours(test.duration_seconds / 3600)),
     ]
     if test.description:
-        lines += ["", esc(test.description)]
-    if test.delivery_mode == DeliveryMode.GROUP:
-        lines += ["", t("emp.test_card.group_mode")]
-    if attempt is not None:
-        lines.append("")
-        if attempt.status == AttemptStatus.IN_PROGRESS:
-            lines.append(t("emp.test_card.in_progress", done=attempt.answered_count, total=attempt.total_questions))
-        elif attempt.status == AttemptStatus.COMPLETED:
-            lines.append(t("emp.test_card.completed", score=pct(attempt.score_percent)))
-        elif attempt.status == AttemptStatus.EXPIRED:
-            lines.append(t("emp.test_card.expired_attempt", score=pct(attempt.score_percent)))
+        lines += ["", esc(truncate(test.description, 600))]
+    lines.append("")
+    if attempt is None:
+        lines.append(t("emp.state.new"))
+        lines.append(t("emp.card.timer_note", d=fmt_hours(test.duration_seconds / 3600)))
+    elif attempt.status == AttemptStatus.IN_PROGRESS and now < attempt.deadline_at:
+        lines += [
+            t("emp.state.progress"),
+            t("emp.card.progress", done=attempt.answered_count, total=attempt.total_questions),
+            t("emp.card.started", d=fmt_dt(attempt.started_at)),
+            t("emp.card.ends", d=fmt_dt(attempt.deadline_at)),
+            t("emp.card.left", d=fmt_span((attempt.deadline_at - now).total_seconds())),
+        ]
+    elif attempt.status == AttemptStatus.COMPLETED:
+        lines += [t("emp.state.done"), t("emp.card.score", score=pct(attempt.score_percent))]
+    else:
+        lines += [t("emp.state.expired"), t("emp.card.score", score=pct(attempt.score_percent))]
+    if test.paused:
+        lines += ["", t("emp.card.paused")]
     return "\n".join(lines)
 
 
-def question_text(test: Test, attempt: TestAttempt, tq: TestQuestion, item: dict) -> str:
-    position = attempt.current_index + 1
-    total = attempt.total_questions
-    lines = [
-        f"📝 <b>{esc(truncate(test.title, 80))}</b>",
-        t("emp.question.header", n=position, total=total) + f"  {progress_bar(attempt.current_index / total * 100)}",
-        t("emp.question.deadline", deadline=fmt_dt(attempt.deadline_at)),
-        "",
-        f"<b>{esc(tq.question_text)}</b>",
-        "",
-    ]
+def question_text(attempt: TestAttempt, tq: TestQuestion, item: dict, position: int, now=None) -> str:
+    """Quiz-style question: [n/total] question, source, options."""
+    now = now or utcnow()
+    lines = [f"<b>[{position + 1}/{attempt.total_questions}]</b> <b>{esc(tq.question_text)}</b>", ""]
+    if tq.source_name:
+        lines += [t("quiz.source", s=esc(tq.source_name)), ""]
     for letter, option in displayed_options(tq, item):
-        lines.append(f"<b>{letter})</b> {esc(option)}")
+        lines.append(f"○ <b>{letter})</b> {esc(option)}")
+    left = (attempt.deadline_at - now).total_seconds()
+    lines += ["", t("quiz.time_left", d=fmt_span(left))]
     return "\n".join(lines)
 
 
-def answer_card(header: list[str], tq: TestQuestion, opts: list[str], selected: str, reveal: AnswerReveal) -> str:
-    """The question after it was answered: marked options, verdict and the full "why" explanation.
+def answer_result_text(
+    tq: TestQuestion, opts: list[str], position: int, total: int, selected: str, reveal: AnswerReveal
+) -> str:
+    """The answer window shown instead of the options: verdict, both answers, source (no praise).
 
     ``opts`` are the ORIGINAL option letters in the order the employee saw them (A, B, C, ...).
     """
-    show = reveal == AnswerReveal.IMMEDIATE
-    selected_original = opts[LETTERS.index(selected)] if selected in LETTERS[: len(opts)] else None
-    is_correct = selected_original == tq.correct_option
-    lines = [*header, f"<b>{esc(tq.question_text)}</b>", ""]
-    correct_display = "?"
-    for i, original in enumerate(opts):
-        letter = LETTERS[i]
-        if original == tq.correct_option:
-            correct_display = letter
-        if show and original == tq.correct_option:
-            mark = "✅"
-        elif original == selected_original:
-            mark = "❌" if show else "🔘"
-        else:
-            mark = "▫️"
-        line = f"{mark} <b>{letter})</b> {esc(tq.options[original])}"
-        if original == selected_original:
-            line += t("card.yours")
-        lines.append(line)
-    lines.append("")
-    if not show:
-        lines.append(t("card.accepted_later" if reveal == AnswerReveal.AFTER_COMPLETION else "card.accepted"))
+    letters = {LETTERS[i]: original for i, original in enumerate(opts)}
+    selected_original = letters.get(selected)
+    correct_display = next((d for d, o in letters.items() if o == tq.correct_option), "?")
+    chosen = f"{selected}) {esc(tq.options.get(selected_original or '', ''))}"
+    lines = [f"<b>[{position + 1}/{total}]</b> <b>{esc(tq.question_text)}</b>", ""]
+    if reveal != AnswerReveal.IMMEDIATE:
+        lines += [t("quiz.accepted"), "", t("quiz.your_answer"), chosen]
+        if reveal == AnswerReveal.AFTER_COMPLETION:
+            lines += ["", t("quiz.reveal_later")]
         return "\n".join(lines)
-    if is_correct:
-        lines.append(t("card.correct"))
+    if selected_original == tq.correct_option:
+        lines += [t("quiz.correct"), "", t("quiz.your_answer"), chosen]
     else:
-        lines.append(t("card.wrong", selected=selected, correct=correct_display))
+        lines += [
+            t("quiz.wrong"),
+            "",
+            t("quiz.your_answer"),
+            chosen,
+            "",
+            t("quiz.correct_answer"),
+            f"{correct_display}) {esc(tq.options[tq.correct_option])}",
+        ]
+    if tq.source_name:
+        lines += ["", t("quiz.source", s=esc(tq.source_name))]
     if tq.explanation:
-        lines += ["", t("card.why"), esc(tq.explanation)]
-    if tq.source_reference:
-        lines += ["", t("card.source", source=esc(truncate(tq.source_reference, 300)))]
+        lines += ["", t("quiz.explanation", text=esc(tq.explanation))]
     return "\n".join(lines)
 
 
-def result_text(test: Test, attempt: TestAttempt) -> str:
+def result_text(test: Test, attempt: TestAttempt, user: User | None = None, sources: list | None = None) -> str:
+    """Final result: facts only (no praise)."""
     unanswered = attempt.total_questions - attempt.answered_count
     header = "emp.result.header" if attempt.status == AttemptStatus.COMPLETED else "emp.result.header_expired"
-    lines = [
-        t(header),
+    lines = [t(header), ""]
+    if user is not None:
+        lines.append(f"👤 {esc(user.display_name)}")
+    lines += [
+        f"📚 {esc(test.title)}",
         "",
-        t("emp.result.test", title=esc(test.title)),
-        t("emp.result.correct", c=attempt.correct_count, total=attempt.total_questions),
+        t("emp.result.questions", n=attempt.total_questions),
+        "",
+        t("emp.result.correct", c=attempt.correct_count),
         t("emp.result.incorrect", n=attempt.incorrect_count),
     ]
     if unanswered:
         lines.append(t("emp.result.unanswered", n=unanswered))
     lines += [
-        t("emp.result.score", score=pct(attempt.score_percent)),
-        t("emp.result.time", time=fmt_duration(attempt.duration_seconds)),
         "",
-        t("emp.result.passed") if attempt.passed else t("emp.result.failed", p=test.passing_percent),
+        t("emp.result.score", score=pct(attempt.score_percent)),
+        "",
+        t("emp.result.time", time=fmt_span(attempt.duration_seconds)),
     ]
+    if sources and len(sources) > 1:
+        lines += ["", t("emp.result.by_source")]
+        for row in sources:
+            lines += ["", f"<b>{esc(row.name)}</b>", t("emp.result.source_row", total=row.total, correct=row.correct)]
     return "\n".join(lines)
 
 
@@ -159,7 +167,7 @@ def corrections_text(items: list[tuple[UserAnswer, TestQuestion]], layout: list[
                 selected=f"{sel_disp}) {esc(letters.get(sel_disp, ''))}",
                 correct=f"{corr_disp}) {esc(letters.get(corr_disp, ''))}",
                 explanation=esc(tq.explanation or "—"),
-                source=esc(tq.source_reference),
+                source=esc(tq.source_name or tq.source_reference),
             )
         )
     return blocks

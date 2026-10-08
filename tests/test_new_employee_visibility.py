@@ -42,10 +42,8 @@ async def test_new_employee_sees_running_tests_right_after_registration(tg, sess
         await settings_service.set_value(session, "auto_approve_all", True)
         await _active_test(session_maker, session, title="Hammaga test")
     await tg(message_update(9301, "/start", "Yangi"))
-    tg.session.clear()
-    await tg(message_update(9301, "Yangiyev Xodim Aliyevich", "Yangi"))
     texts = "\n".join(tg.session.texts())
-    assert "muvaffaqiyatli" in texts and "Hammaga test" in texts  # tests listed without pressing anything
+    assert "TESTLARIM" in texts and "Hammaga test" in texts and "Ishlanmagan" in texts  # listed right away
 
 
 async def test_manually_approved_member_sees_group_test(tg, session_maker):  # noqa: F811
@@ -130,22 +128,14 @@ async def test_admin_can_start_an_already_running_test_in_a_group(tg, session_ma
     await tg(callback_update(ADMIN, AdminCB(s="tst_grp_go", id=test_id, v=str(group_db_id)).pack()))
     await _wait_background()
     group_msgs = tg.session.sent_to(GROUP_CHAT)
-    assert len(group_msgs) == 3 and "YANGI TEST BOSHLANDI" in group_msgs[0].text
+    # One header with ▶️ TESTNI BOSHLASH; the questions are answered privately.
+    assert len(group_msgs) == 1 and "YANGI TEST" in group_msgs[0].text
     assert any("guruhiga yuborildi" in m.text for m in tg.session.sent_to(ADMIN))
-    # A group member who answers there is recorded against the same test.
+    # A group member who presses START gets their own attempt for the same test.
     async with session_maker() as session:
         post = (await session.execute(select(group_tests.GroupTestPost))).scalar_one()
-        msg = (
-            (
-                await session.execute(
-                    select(group_tests.GroupQuestionMessage).where(group_tests.GroupQuestionMessage.post_id == post.id)
-                )
-            )
-            .scalars()
-            .first()
-        )
-        result = await group_tests.submit_group_answer(session, tg_user(9401, "Guruhdan"), msg.id, "A")
-        assert result.code == group_tests.GroupAnswerCode.ACCEPTED
+        code, attempt = await group_tests.group_start(session, tg_user(9401, "Guruhdan"), post.id)
+        assert code == group_tests.GroupAnswerCode.ACCEPTED and attempt.test_id == test_id
 
 
 async def test_admin_is_told_when_the_bot_cannot_post_in_the_group(tg, session_maker):  # noqa: F811
@@ -162,7 +152,7 @@ async def test_admin_is_told_when_the_bot_cannot_post_in_the_group(tg, session_m
     tg.session.clear()
     await tg(callback_update(ADMIN, AdminCB(s="tst_grp_go", id=test_id, v=str(group_db_id)).pack()))
     await _wait_background()
-    assert len(tg.session.sent_to(GROUP_CHAT)) == 3
+    assert len(tg.session.sent_to(GROUP_CHAT)) == 1
 
 
 async def test_member_of_posted_group_sees_test_in_private_list(tg, session_maker):  # noqa: F811

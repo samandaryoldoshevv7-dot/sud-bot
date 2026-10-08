@@ -206,10 +206,11 @@ class QuestionGenerator:
         news_ids = {c.news_id for c in chunks if c.news_id}
         titles: dict[tuple[str, int], str] = {}
         if material_ids:
-            for mid, title in await session.execute(
-                select(Material.id, Material.title).where(Material.id.in_(material_ids))
+            for mid, title, file_name in await session.execute(
+                select(Material.id, Material.title, Material.file_name).where(Material.id.in_(material_ids))
             ):
                 titles[("material", mid)] = title
+                titles[("material_file", mid)] = file_name or title
         if news_ids:
             for nid, title in await session.execute(select(News.id, News.title).where(News.id.in_(news_ids))):
                 titles[("news", nid)] = title
@@ -221,6 +222,14 @@ class QuestionGenerator:
                 chunk, titles.get(("material", chunk.material_id), "Material"), "material"
             ), SourceKind.MATERIAL
         return chunk_reference(chunk, titles.get(("news", chunk.news_id or 0), "Yangilik"), "news"), SourceKind.NEWS
+
+    def _identity(self, chunk: SourceChunk, titles: dict[tuple[str, int], str]) -> tuple[str, str]:
+        """The real document of a chunk: (source name, original file name)."""
+        if chunk.material_id is not None:
+            name = titles.get(("material", chunk.material_id), "")
+            return name, titles.get(("material_file", chunk.material_id), name)
+        name = titles.get(("news", chunk.news_id or 0), "")
+        return name, name
 
     async def _existing_questions(self, session: AsyncSession, chunk_ids: list[int]) -> list[str]:
         stmt = select(Question.question_text).where(Question.source_chunk_id.in_(chunk_ids)).limit(50)
@@ -243,7 +252,7 @@ class QuestionGenerator:
         if missing:
             titles.update(await self._source_titles(session, missing))
         by_id = {c.id: c for c in context}
-        ctx = [prompts.ContextChunk(c.id, self._ref(c, titles)[0], c.text) for c in context]
+        ctx = [prompts.ContextChunk(c.id, self._ref(c, titles)[0], c.text, *self._identity(c, titles)) for c in context]
         existing = await self._existing_questions(session, list(by_id))
 
         response = await structured_call(
@@ -294,6 +303,14 @@ class QuestionGenerator:
                 result.rejected["duplicate"] += 1
                 continue
             chunk = by_id[check.match.chunk_id]  # type: ignore[union-attr]
+            # The source must be named and must be the document the excerpt really comes from.
+            if not item.source.strip() or not item.source_file.strip():
+                result.rejected["missing_source"] += 1
+                continue
+            if not same_source(item.source, item.source_file, *self._identity(chunk, titles)):
+                result.rejected["source_mismatch"] += 1
+                logger.info("Generated question names a different source", extra={"chunk_id": chunk.id})
+                continue
             verified = await self._verify(item, chunk, result)
             if verified is None:
                 continue
@@ -431,6 +448,22 @@ class QuestionGenerator:
         except AIError as exc:
             logger.warning("Topic classification failed; using generator topics", extra={"error": str(exc)[:200]})
         return [await get_or_create_topic(session, name, existing) for name in suggested]
+
+
+def _norm_source(value: str) -> str:
+    value = value.strip().casefold()
+    for ext in (".pdf", ".docx", ".doc", ".txt", ".md"):
+        value = value.removesuffix(ext)
+    return " ".join(value.replace("_", " ").replace("-", " ").split())
+
+
+def same_source(claimed_name: str, claimed_file: str, real_name: str, real_file: str) -> bool:
+    """Does the document the AI named match the chunk's real document (name or file name)?"""
+    real = {_norm_source(real_name), _norm_source(real_file)} - {""}
+    claimed = {_norm_source(claimed_name), _norm_source(claimed_file)} - {""}
+    if not real or not claimed:
+        return False
+    return any(c == r or fuzz.ratio(c, r) >= 90 for c in claimed for r in real)
 
 
 async def get_or_create_topic(session: AsyncSession, name: str, existing: list[Topic] | None = None) -> Topic | None:

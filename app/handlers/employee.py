@@ -1,4 +1,9 @@
-"""Employee flows: available tests, taking a test, results and corrections."""
+"""Employee flows: 📚 Testlarim, taking a test (quiz style), results and corrections.
+
+Everything is driven by the database (attempt row + answers), never by process memory, so a restart
+or the employee leaving Telegram changes nothing: the personal deadline keeps running on the server
+and the employee continues from the first unanswered question.
+"""
 
 from __future__ import annotations
 
@@ -6,11 +11,11 @@ import logging
 
 from aiogram import Bot, F, Router
 from aiogram.exceptions import TelegramBadRequest
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.handlers.formatting import (
-    answer_card,
+    answer_result_text,
     corrections_text,
     employee_test_card,
     question_text,
@@ -21,12 +26,13 @@ from app.keyboards.callbacks import AnsCB, EmpCB
 from app.keyboards.common import kb
 from app.keyboards.employee import answer_kb
 from app.locales import t
-from app.models import AnswerReveal, AttemptStatus, DeliveryMode, Test, TestAttempt, TestStatus, User, UserStatus
+from app.models import AnswerReveal, AttemptStatus, Test, TestAttempt, TestStatus, User, UserStatus
 from app.services import attempts as attempt_service
-from app.services import group_tests
-from app.services.attempts import AnswerOutcome, StartError
+from app.services.attempts import AnswerOutcome, MyTestState, StartError
+from app.services.test_builder import source_names
+from app.statistics.sources import attempt_source_breakdown
 from app.utils.text import esc, pct, split_message, truncate
-from app.utils.time import fmt_dt
+from app.utils.time import fmt_dt, utcnow
 
 logger = logging.getLogger(__name__)
 router = Router(name="employee")
@@ -41,22 +47,33 @@ START_ERRORS = {
     StartError.NOT_IN_GROUP: "emp.start_error.not_in_group",
     StartError.ALREADY_COMPLETED: "emp.start_error.already_completed",
     StartError.NO_QUESTIONS: "emp.start_error.no_questions",
+    StartError.PAUSED: "emp.start_error.paused",
+    StartError.NOT_ASSIGNED: "emp.start_error.not_assigned",
 }
+MY_TESTS_TEXTS = {t("emp.btn.my_tests"), t("emp.btn.my_tests_old")}
 
 
 def _can_use(user: User | None, is_admin: bool) -> bool:
     return user is not None and (is_admin or user.status == UserStatus.ACTIVE)
 
 
-def _card_keyboard(test: Test, attempt: TestAttempt | None):
-    if attempt is not None and attempt.status == AttemptStatus.IN_PROGRESS:
-        return kb([(t("emp.btn.continue_test"), EmpCB(a="start", id=test.id))])
-    if attempt is not None and attempt.status in (AttemptStatus.COMPLETED, AttemptStatus.EXPIRED):
-        rows = [[(t("emp.btn.view_result"), EmpCB(a="res", id=attempt.id))]]
-        return kb(*rows)
-    if test.status == TestStatus.ACTIVE:
-        return kb([(t("emp.btn.start_test"), EmpCB(a="start", id=test.id))])
-    return None
+async def _find_my_test(session: AsyncSession, user: User, test_id: int) -> attempt_service.MyTest | None:
+    return next((m for m in await attempt_service.my_tests(session, user, limit=100) if m.test.id == test_id), None)
+
+
+def _card_keyboard(item: attempt_service.MyTest | None) -> InlineKeyboardMarkup | None:
+    if item is None:
+        return None
+    rows = []
+    if item.state == MyTestState.IN_PROGRESS and item.can_start:
+        rows.append([(t("emp.btn.continue_test"), EmpCB(a="start", id=item.test.id))])
+    elif item.state == MyTestState.NOT_STARTED and item.can_start:
+        rows.append([(t("emp.btn.start_test"), EmpCB(a="start", id=item.test.id))])
+    elif item.can_start:
+        rows.append([(t("emp.btn.retake"), EmpCB(a="start", id=item.test.id))])
+    if item.attempt is not None and item.attempt.status != AttemptStatus.IN_PROGRESS:
+        rows.append([(t("emp.btn.view_result"), EmpCB(a="res", id=item.attempt.id))])
+    return kb(*rows) if rows else None
 
 
 async def send_test_card(message: Message, session: AsyncSession, user: User, test_id: int) -> None:
@@ -64,18 +81,22 @@ async def send_test_card(message: Message, session: AsyncSession, user: User, te
     if test is None or test.status == TestStatus.DRAFT:
         await message.answer(t("emp.start_error.not_found"))
         return
-    attempts = [a for tst, a in await attempt_service.available_tests_for_user(session, user) if tst.id == test_id]
-    attempt = attempts[0] if attempts else None
-    if test.status != TestStatus.ACTIVE and attempt is None:
-        key = (
-            "emp.start_error.not_started_yet" if test.status == TestStatus.READY else "emp.start_error.deadline_passed"
-        )
-        await message.answer(t(key))
+    item = await _find_my_test(session, user, test_id)
+    if item is None:
+        if test.status == TestStatus.READY:
+            await message.answer(t("emp.start_error.not_started_yet"))
+        elif test.status != TestStatus.ACTIVE:
+            await message.answer(t("emp.start_error.deadline_passed"))
+        else:
+            await message.answer(t("emp.start_error.not_assigned"))
         return
-    await message.answer(employee_test_card(test, attempt), reply_markup=_card_keyboard(test, attempt))
+    await message.answer(
+        employee_test_card(test, item.attempt, await source_names(session, test.id)),
+        reply_markup=_card_keyboard(item),
+    )
 
 
-@router.message(F.text == t("emp.btn.my_tests"))
+@router.message(F.text.in_(MY_TESTS_TEXTS))
 async def my_tests(message: Message, session: AsyncSession, bot: Bot, user: User | None, is_admin: bool) -> None:
     if not _can_use(user, is_admin):
         await message.answer(
@@ -126,20 +147,64 @@ async def cb_card(
     await send_test_card(callback.message, session, user, callback_data.id)
 
 
-async def send_current_question(bot: Bot, chat_id: int, session: AsyncSession, attempt: TestAttempt) -> None:
+# ------------------------------------------------------------------------------ taking a test
+
+
+async def _question_view(session: AsyncSession, attempt: TestAttempt) -> tuple[str, InlineKeyboardMarkup] | None:
     current = await attempt_service.current_question(session, attempt)
     if current is None:
-        return
+        return None
     tq, item = current
-    test = await session.get(Test, attempt.test_id)
-    assert test is not None
-    letters = [chr(ord("A") + i) for i in range(len(item["opts"]))]
-    sent = await bot.send_message(
-        chat_id,
-        question_text(test, attempt, tq, item),
-        reply_markup=answer_kb(attempt.id, attempt.current_index, letters),
-    )
+    position = attempt.current_index
+    return question_text(attempt, tq, item, position), answer_kb(attempt.id, position, tq, item)
+
+
+async def send_current_question(bot: Bot, chat_id: int, session: AsyncSession, attempt: TestAttempt) -> None:
+    view = await _question_view(session, attempt)
+    if view is None:
+        return
+    sent = await bot.send_message(chat_id, view[0], reply_markup=view[1])
     await attempt_service.set_message_ref(session, attempt.id, chat_id, sent.message_id)
+
+
+async def _final_result(
+    session: AsyncSession, test: Test, attempt: TestAttempt
+) -> tuple[str, InlineKeyboardMarkup | None]:
+    user = await session.get(User, attempt.user_id)
+    text = result_text(test, attempt, user, await attempt_source_breakdown(session, attempt.id))
+    markup = None
+    if test.answer_reveal != AnswerReveal.NEVER and attempt.incorrect_count:
+        markup = kb([(t("emp.btn.corrections"), EmpCB(a="corr", id=attempt.id))])
+    return text, markup
+
+
+async def open_test_in_private(
+    bot: Bot, chat_id: int, session: AsyncSession, user: User, test_id: int
+) -> tuple[StartError | None, bool]:
+    """Start (or resume) the employee's own attempt and show the current question here.
+
+    Returns ``(error, resumed)``. Used by ▶️ TESTNI BOSHLASH in the private chat and by the deep link
+    the group button opens."""
+    result = await attempt_service.start_attempt(session, user, test_id, chat_id=chat_id)
+    if result.error is not None:
+        return result.error, False
+    attempt = result.attempt
+    assert attempt is not None
+    if attempt.chat_id and attempt.last_message_id:
+        # Only the freshly sent question message is answerable.
+        try:
+            await bot.edit_message_reply_markup(chat_id=attempt.chat_id, message_id=attempt.last_message_id)
+        except TelegramBadRequest:
+            pass
+    if not result.resumed or (attempt.answered_count == 0 and attempt.last_message_id is None):
+        test = await session.get(Test, attempt.test_id)
+        await bot.send_message(
+            chat_id,
+            t("emp.test_started", title=esc(test.title if test else ""), n=attempt.total_questions,
+              start=fmt_dt(attempt.started_at), end=fmt_dt(attempt.deadline_at)),
+        )  # fmt: skip
+    await send_current_question(bot, chat_id, session, attempt)
+    return None, result.resumed
 
 
 @router.callback_query(EmpCB.filter(F.a == "start"))
@@ -156,48 +221,21 @@ async def cb_start(
         await callback.answer(t("emp.start_error.user_not_active"), show_alert=True)
         return
     test = await session.get(Test, callback_data.id)
-    layout = None
-    if test is not None and test.delivery_mode == DeliveryMode.GROUP:
-        # Group test continued in the private chat (e.g. new members who cannot see older group
-        # messages): same questions, same letters, same "one answer per question" rule.
-        layout = await group_tests.group_layout_for_test(session, test.id)
-        if test.group_id and not await attempt_service.user_in_test_audience(session, test, user):
-            from app.handlers.common import check_group_membership
+    if test is not None and test.group_id and not await attempt_service.user_in_test_audience(session, test, user):
+        from app.handlers.common import check_group_membership
 
-            await check_group_membership(bot, session, user)
-    result = await attempt_service.start_attempt(
-        session, user, callback_data.id, chat_id=callback.message.chat.id, layout=layout
-    )
-    if result.error is not None:
-        await callback.answer(t(START_ERRORS[result.error]), show_alert=True)
+        await check_group_membership(bot, session, user)
+    error, resumed = await open_test_in_private(bot, callback.message.chat.id, session, user, callback_data.id)
+    if error is not None:
+        await callback.answer(t(START_ERRORS[error]), show_alert=True)
         return
-    attempt = result.attempt
-    assert attempt is not None
-    await callback.answer(t("emp.resumed") if result.resumed else t("emp.started"))
-    try:
-        await callback.message.edit_reply_markup(reply_markup=None)
-    except TelegramBadRequest:
-        pass
-    if result.resumed and attempt.chat_id and attempt.last_message_id:
-        # Disable the old question message so only the freshly sent one is answerable.
-        try:
-            await bot.edit_message_reply_markup(
-                chat_id=attempt.chat_id, message_id=attempt.last_message_id, reply_markup=None
-            )
-        except TelegramBadRequest:
-            pass
-    else:
-        test = await session.get(Test, attempt.test_id)
-        await callback.message.answer(
-            t("emp.test_started", title=esc(test.title if test else ""), n=attempt.total_questions)
-        )
-    await send_current_question(bot, callback.message.chat.id, session, attempt)
+    await callback.answer(t("emp.resumed") if resumed else t("emp.started"))
 
 
 @router.callback_query(AnsCB.filter())
-async def cb_answer(
-    callback: CallbackQuery, callback_data: AnsCB, session: AsyncSession, bot: Bot, user: User | None, is_admin: bool
-) -> None:
+async def cb_answer(callback: CallbackQuery, callback_data: AnsCB, session: AsyncSession, user: User | None) -> None:
+    """A variant was pressed: identify the employee (callback.from_user via the user middleware), find
+    THEIR attempt, store the answer, check it and show the verdict right away."""
     if user is None or not isinstance(callback.message, Message):
         await callback.answer()
         return
@@ -205,13 +243,18 @@ async def cb_answer(
     message = callback.message
 
     if result.outcome == AnswerOutcome.DUPLICATE:
-        await callback.answer(t("emp.answer.duplicate"))
+        await callback.answer(t("gt.alert.duplicate"), show_alert=True)
         return
     if result.outcome == AnswerOutcome.INVALID:
         await callback.answer(t("errors.stale_button"), show_alert=True)
         return
+    if result.outcome == AnswerOutcome.PAUSED:
+        await callback.answer(t("quiz.paused"), show_alert=True)
+        return
     if result.outcome == AnswerOutcome.NOT_IN_PROGRESS:
-        await callback.answer(t("emp.answer.not_in_progress"), show_alert=True)
+        finished = result.attempt is not None and result.attempt.status == AttemptStatus.COMPLETED
+        # Every question of a completed attempt is answered: the answer is final.
+        await callback.answer(t("gt.alert.duplicate") if finished else t("emp.answer.not_in_progress"), show_alert=True)
         try:
             await message.edit_reply_markup(reply_markup=None)
         except TelegramBadRequest:
@@ -223,41 +266,64 @@ async def cb_answer(
     assert test is not None
     if result.outcome == AnswerOutcome.EXPIRED:
         await callback.answer(t("emp.answer.expired"), show_alert=True)
+        text, markup = await _final_result(session, test, attempt)
         try:
-            await message.edit_reply_markup(reply_markup=None)
+            await message.edit_text(text, reply_markup=markup)
         except TelegramBadRequest:
-            pass
-        await message.answer(result_text(test, attempt))
+            await message.answer(text, reply_markup=markup)
         return
 
     await callback.answer()
-    item = attempt.layout[callback_data.pos] if callback_data.pos < len(attempt.layout) else None
-    if result.question is not None and item is not None:
-        header = [
-            f"📝 <b>{esc(truncate(test.title, 80))}</b>",
-            t("emp.question.header", n=callback_data.pos + 1, total=attempt.total_questions),
-            "",
-        ]
-        try:
-            await message.edit_text(
-                answer_card(header, result.question, list(item["opts"]),
-                            result.selected_display or callback_data.o, test.answer_reveal),
-                reply_markup=None,
-            )  # fmt: skip
-        except TelegramBadRequest as exc:
-            logger.debug("Could not edit answered question", extra={"error": str(exc)[:100]})
-
-    if result.finished:
-        await send_result(message, session, test, attempt)
-    else:
-        await send_current_question(bot, message.chat.id, session, attempt)
+    item = attempt.layout[callback_data.pos]
+    assert result.question is not None
+    text = answer_result_text(
+        result.question, list(item["opts"]), callback_data.pos, attempt.total_questions,
+        result.selected_display or callback_data.o, test.answer_reveal,
+    )  # fmt: skip
+    markup = kb([(t("quiz.btn.close"), EmpCB(a="next", id=attempt.id))])
+    try:
+        await message.edit_text(text, reply_markup=markup)
+    except TelegramBadRequest as exc:
+        logger.debug("Could not edit answered question", extra={"error": str(exc)[:100]})
+        await message.answer(text, reply_markup=markup)
 
 
-async def send_result(message: Message, session: AsyncSession, test: Test, attempt: TestAttempt) -> None:
-    rows = []
-    if test.answer_reveal == AnswerReveal.AFTER_COMPLETION and attempt.incorrect_count:
-        rows.append([(t("emp.btn.corrections"), EmpCB(a="corr", id=attempt.id))])
-    await message.answer(result_text(test, attempt), reply_markup=kb(*rows) if rows else None)
+@router.callback_query(EmpCB.filter(F.a == "next"))
+async def cb_close_result(
+    callback: CallbackQuery, callback_data: EmpCB, session: AsyncSession, user: User | None
+) -> None:
+    """✖️ CHIQISH: closes the answer window only. The attempt and the answer stay saved; the same
+    message turns into the next question (or the final result after the last one)."""
+    if user is None or not isinstance(callback.message, Message):
+        await callback.answer()
+        return
+    attempt = await session.get(TestAttempt, callback_data.id)
+    if attempt is None or attempt.user_id != user.id:
+        await callback.answer(t("errors.stale_button"), show_alert=True)
+        return
+    test = await session.get(Test, attempt.test_id)
+    assert test is not None
+    now = utcnow()
+    if attempt.status == AttemptStatus.IN_PROGRESS and now >= attempt.deadline_at:
+        await attempt_service.finalize_attempt(session, attempt, AttemptStatus.EXPIRED, now)
+        await session.commit()
+    await callback.answer()
+    message = callback.message
+    if attempt.status == AttemptStatus.IN_PROGRESS:
+        view = await _question_view(session, attempt)
+        if view is not None:
+            try:
+                await message.edit_text(view[0], reply_markup=view[1])
+                await attempt_service.set_message_ref(session, attempt.id, message.chat.id, message.message_id)
+            except TelegramBadRequest:
+                sent = await message.answer(view[0], reply_markup=view[1])
+                await attempt_service.set_message_ref(session, attempt.id, message.chat.id, sent.message_id)
+            return
+    text, markup = await _final_result(session, test, attempt)
+    try:
+        await message.edit_text(text, reply_markup=markup)
+    except TelegramBadRequest:
+        await message.answer(text, reply_markup=markup)
 
 
 @router.callback_query(EmpCB.filter(F.a == "res"))
@@ -275,10 +341,8 @@ async def cb_result(callback: CallbackQuery, callback_data: EmpCB, session: Asyn
     await callback.answer()
     test = await session.get(Test, attempt.test_id)
     assert test is not None
-    rows = []
-    if test.answer_reveal != AnswerReveal.NEVER and attempt.incorrect_count:
-        rows.append([(t("emp.btn.corrections"), EmpCB(a="corr", id=attempt.id))])
-    await callback.message.answer(result_text(test, attempt), reply_markup=kb(*rows) if rows else None)
+    text, markup = await _final_result(session, test, attempt)
+    await callback.message.answer(text, reply_markup=markup)
 
 
 @router.callback_query(EmpCB.filter(F.a == "corr"))

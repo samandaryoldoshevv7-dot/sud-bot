@@ -38,6 +38,7 @@ async def test_test_report_xlsx_contents(session_maker, session):
         "Xato javoblar",
         "Barcha javoblar",
         "Savollar tahlili",
+        "Manba bo'yicha",
     ]
     attempts = list(wb["Barcha urinishlar"].iter_rows(values_only=True))
     header, row = attempts[0], attempts[1]

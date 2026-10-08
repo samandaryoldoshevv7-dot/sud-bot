@@ -24,7 +24,7 @@ from app.utils.time import fmt_dt, fmt_duration
 
 router = Router(name="admin_employees")
 
-STATUS_ICON = {UserStatus.ACTIVE: "🟢", UserStatus.PENDING: "🟡", UserStatus.INACTIVE: "🗑"}
+STATUS_ICON = {UserStatus.ACTIVE: "🟢", UserStatus.PENDING: "🟡", UserStatus.INACTIVE: "🗑", UserStatus.BLOCKED: "⛔️"}
 
 
 class EmployeeStates(StatesGroup):
@@ -42,6 +42,7 @@ async def cb_section(callback: CallbackQuery, session: AsyncSession, state: FSMC
         active=counts["active"],
         pending=counts["pending"],
         inactive=counts["inactive"],
+        blocked=counts["blocked"],
     )
     await show(
         callback,
@@ -55,7 +56,10 @@ async def cb_section(callback: CallbackQuery, session: AsyncSession, state: FSMC
                 (t("emp_admin.btn.pending", n=counts["pending"]), AdminCB(s="emp_l", v="pending")),
                 (t("emp_admin.btn.inactive", n=counts["inactive"]), AdminCB(s="emp_l", v="inactive")),
             ],
-            [(t("emp_admin.btn.search"), AdminCB(s="emp_srch"))],
+            [
+                (t("emp_admin.btn.blocked"), AdminCB(s="emp_l", v="blocked")),
+                (t("emp_admin.btn.search"), AdminCB(s="emp_srch")),
+            ],
             back_menu_row("menu"),
         ),
     )
@@ -158,7 +162,19 @@ async def render_profile(target, session: AsyncSession, user_id: int, back: str 
     ]
     if user.role == UserRole.EMPLOYEE:
         if user.status == UserStatus.ACTIVE:
-            rows.append([(t("emp_admin.btn.remove"), AdminCB(s="emp_rm", id=user.id, v=back))])
+            rows.append(
+                [
+                    (t("emp_admin.btn.block"), AdminCB(s="emp_blk", id=user.id)),
+                    (t("emp_admin.btn.remove"), AdminCB(s="emp_rm", id=user.id, v=back)),
+                ]
+            )
+        elif user.status == UserStatus.BLOCKED:
+            rows.append(
+                [
+                    (t("emp_admin.btn.unblock"), AdminCB(s="emp_appr", id=user.id)),
+                    (t("emp_admin.btn.remove"), AdminCB(s="emp_rm", id=user.id, v=back)),
+                ]
+            )
         elif user.status == UserStatus.PENDING:
             rows.append(
                 [
@@ -182,9 +198,11 @@ async def cb_profile(callback: CallbackQuery, callback_data: AdminCB, session: A
     await render_profile(callback, session, callback_data.id, callback_data.v or "all")
 
 
-@router.callback_query(AdminCB.filter(F.s.in_({"emp_appr", "emp_deact"})))
+@router.callback_query(AdminCB.filter(F.s.in_({"emp_appr", "emp_deact", "emp_blk"})))
 async def cb_set_status(callback: CallbackQuery, callback_data: AdminCB, session: AsyncSession, bot: Bot) -> None:
-    status = UserStatus.ACTIVE if callback_data.s == "emp_appr" else UserStatus.INACTIVE
+    status = {"emp_appr": UserStatus.ACTIVE, "emp_deact": UserStatus.INACTIVE, "emp_blk": UserStatus.BLOCKED}[
+        callback_data.s
+    ]
     user = await session.get(User, callback_data.id)
     if user is None:
         await callback.answer(t("common.not_found"), show_alert=True)
@@ -196,7 +214,10 @@ async def cb_set_status(callback: CallbackQuery, callback_data: AdminCB, session
     await user_service.set_status(session, user.id, status)
     await callback.answer(t("emp_admin.status_changed"))
     if previous != status and user.has_private_chat:
-        key = "emp_admin.notify_activated" if status == UserStatus.ACTIVE else "emp_admin.notify_deactivated"
+        key = {
+            UserStatus.ACTIVE: "emp_admin.notify_activated",
+            UserStatus.BLOCKED: "emp_admin.notify_blocked",
+        }.get(status, "emp_admin.notify_deactivated")
         await safe_send(bot, user.telegram_id, t(key))
         if status == UserStatus.ACTIVE:
             from app.handlers.test_listing import available_tests_view

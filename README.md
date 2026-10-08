@@ -14,7 +14,10 @@ Excel hisobotlarni kuzatadi.
 ## Mundarija
 
 1. [Imkoniyatlar](#imkoniyatlar)
-   - [Test guruhning o'zida](#test-guruhning-ozida)
+   - [Aralash test yaratish](#test-yaratish-bir-nechta-fayldan-aralash-test)
+   - [Xodim: Testlarim va test jarayoni](#xodim-testlarim-va-test-jarayoni)
+   - [Guruhda test](#guruhda-test)
+   - [Admin: boshqaruv va natijalar](#admin-boshqaruv-va--natijalar)
 2. [Arxitektura](#arxitektura)
 3. [Talablar](#talablar)
 4. [Muhit o'zgaruvchilari](#muhit-ozgaruvchilari)
@@ -38,7 +41,9 @@ Excel hisobotlarni kuzatadi.
 
 | Bo'lim | Nima qiladi |
 |---|---|
-| 👥 Xodimlar | ro'yxat (sahifalash), qidirish, tasdiqlash, **🗑 o'chirish** (ro'yxatdan yo'qoladi, natijalari hisobotda qoladi; «🗑 O'chirilganlar»dan qayta tiklash yoki ❌ butunlay o'chirish), profil, statistika, zaif/kuchli mavzular, **xato javoblar** tarixi |
+| ➕ Test yaratish | nom → bir nechta fayl → 🔀 aralash test → savollar soni → vaqt (6/12/24 soat, 2 kun) → kimga (hammaga / guruhga / tanlanganlarga / bitta xodimga) |
+| 📋 Natijalar | test → xodimlar natijasi → har bir javob (tanlagan, to'g'ri javob, manba); qo'shimcha vaqt, qayta topshirish, testdan olib tashlash |
+| 👥 Xodimlar | ro'yxat (sahifalash), qidirish, faollashtirish, **⛔️ bloklash / blokdan chiqarish**, **🗑 o'chirish** (ro'yxatdan yo'qoladi, natijalari hisobotda qoladi; «🗑 O'chirilganlar»dan qayta tiklash yoki ❌ butunlay o'chirish), profil, statistika, zaif/kuchli mavzular, **xato javoblar** tarixi |
 | 📚 Materiallar | PDF / DOCX / TXT / MD fayl yoki nusxalangan matn yuklash; avtomatik ajratish → tozalash → bo'laklash → embedding; holat UPLOADED/PROCESSING/READY/FAILED; xato sababi; AI bilan savol yaratish; arxivlash/o'chirish |
 | 📰 Yangiliklar | sarlavha, matn, sana, manba, toifa, faol/nofaol; testlarda manba sifatida (masalan 30%) |
 | 📝 Testlar | Usta: nom, tavsif, savollar soni, variantlar (3–5), qiyinlik, manbalar, yangiliklar %, mavzu, **qayerda ishlanadi (guruhda yoki shaxsiy chatda)**, boshlanish, muddat, aralashtirish, javoblarni ko'rsatish rejimi (darhol / test oxirida / ko'rsatilmaydi), o'tish bali. **⚡ Tezkor test**: material sahifasidan bir bosishda. Hayot sikli: **DRAFT → READY → ACTIVE → EXPIRED / CLOSED** |
@@ -51,80 +56,98 @@ Excel hisobotlarni kuzatadi.
 | 👥 Guruhlar | Telegram guruhlarni ro'yxatga olish, a'zolar, test e'lonini guruhga yuborish |
 | ⚙️ Sozlamalar | avto-tasdiqlash, xabarnomalar, eslatma vaqti, reyting minimumi va h.k. |
 
-**Xodim:** `📝 Mening testlarim`, `📊 Natijalarim`, `ℹ️ Yordam`. Test kartasi → **▶️ TESTNI BOSHLASH** →
-har bir savol alohida xabar, A/B/C/D tugmalari → yakunda natija (to'g'ri, xato, foiz, vaqt) va
-(ruxsat bo'lsa) xatolar tahlili. Xodim faqat **o'z** natijalarini ko'radi.
+**Xodim:** `📚 Testlarim`, `📊 Natijalarim`, `ℹ️ Yordam` (batafsil quyida). Xodim faqat **o'z**
+natijalarini ko'radi.
 
 **Avtomatik (scheduler):** rejalashtirilgan testni vaqtida faollashtirish va e'lon qilish, muddat
 tugaganda testni va tugallanmagan urinishlarni yopish, muddatdan oldin eslatma, test tugaganda
 adminlarga yakuniy hisobot.
 
-### Test guruhning o'zida
+### Test yaratish: bir nechta fayldan aralash test
 
-Asosiy rejim: test **Telegram guruhining o'zida** ishlanadi (veb-sayt yoki web-app yo'q).
+1. **➕ Test yaratish** → «Test nomini kiriting» → nom.
+2. «Test uchun fayllarni yuboring» → bir yoki bir nechta fayl (PDF/DOCX/TXT/MD). Har bir fayl alohida
+   **manba** bo'ladi va `test_sources` jadvaliga darhol yoziladi: manba nomi (`Konstitutsiya.pdf` →
+   «Konstitutsiya»), asl fayl nomi va Telegram `file_id`. Fayllar fonda o'qiladi (⏳ → ✅).
+3. **🔀 Aralashtirib test tuzish** → savollar soni: 10 / 20 / 30 / 40 / 50 / ✍️ maxsus.
+4. **⏱ TEST VAQTI** — faqat 4 variant: **6 soat · 12 soat · 24 soat · 2 kun** (standart 24 soat;
+   bazada soniyada: 21600 / 43200 / 86400 / 172800).
+5. **👥 Kimlarga berilsin?** — barcha xodimlarga / guruhga / tanlangan xodimlarga / bitta xodimga.
+6. **✅ Testni yaratish** → bot har bir faylga teng ulush beradi (40 ta / 4 fayl = 10 tadan), avval
+   tasdiqlangan bank savollarini oladi, yetmasa faqat **o'sha fayl** matnidan yangi savol tuzadi
+   (biror fayl yetarli bermasa, qolgan fayllar to'ldiradi) → test faollashadi → xodimlarning
+   «📚 Testlarim» bo'limida paydo bo'ladi va ularga xabar boradi. Hammasi tuzilmasa:
+   «⚠️ 40 tadan 32 tasi tuzildi» va **✅ 32 ta savol bilan yuborish** tugmasi.
 
-1. Admin: **📝 Testlar → test → ▶️ Guruhda boshlash → guruhni tanlash**.
-2. Bot guruhga sarlavha yuboradi: `📝 YANGI TEST BOSHLANDI`, savollar soni, muddat, tugash vaqti va
-   **[▶️ TESTNI BOSHLASH]**. So'ng har bir savolni alohida xabar qilib yuboradi:
+**Manba qat'iy:** AI javobida `question, options, correct_answer, source, source_file` majburiy.
+Backend: (1) Pydantic tekshiruvi; (2) iqtibos aynan o'sha bo'lak (chunk) matnidan topilishi kerak;
+(3) AI ko'rsatgan `source/source_file` iqtibos topilgan bo'lakning **haqiqiy** fayliga mos bo'lishi
+kerak — bo'sh bo'lsa `missing_source`, boshqa hujjat ko'rsatilsa `source_mismatch` bilan rad etiladi;
+(4) ko'r tekshiruv va sifat tekshiruvi. Bazaga AI yozgan nom emas, bo'lakning haqiqiy manbasi yoziladi.
+Manbasi aniqlanmagan savol testga qo'shilmaydi.
 
-   ```
-   📝 Savol 1 / 20
-   Ma'muriy sudga murojaat qilish muddati qaysi?
+**Aralashtirish:** savollar manbalar bo'yicha almashinib chiqadi (1 — Konstitutsiya, 2 — Mehnat kodeksi,
+3 — Ma'muriy kodeks, 4 — Sug'urta, 5 — Konstitutsiya…). Har bir xodimga o'z tartibi beriladi, lekin
+boshqa manbada savol qolgan bo'lsa, bir manbaning savoli ketma-ket kelmaydi. Variantlar ham har bir
+xodim uchun aralashtiriladi; ko'rilgan harf → asl variant mapping'i saqlanadi (`selected_display`,
+`selected_option`), to'g'ri javob har doim asl harf bo'yicha tekshiriladi.
 
-   A) 10 kun
-   B) 1 oy
-   C) 3 oy
-   D) 6 oy
+### Xodim: 📚 Testlarim va test jarayoni
 
-   ━━━━━━━━━━━━━━━━
-   👇 Javobni tanlang. Tanlovingizni faqat siz ko'rasiz, javobni o'zgartirib bo'lmaydi.
-          [A] [B] [C] [D]
-   ```
-   Tugmalarda faqat harflar; variantlarning to'liq matni xabarning o'zida. Guruhda ovoz berishga
-   o'xshash hisoblagich yoki foizlar **yo'q** — kim nima tanlagani faqat admin panelida.
-3. Xodim tugmani bosadi → javob bazaga yoziladi. Natija **faqat unga** ko'rinadi
-   (guruhdagilar boshqa odamning javobini ko'rmaydi):
-   * «darhol» rejimi: qalqib chiquvchi oynada `✅ TO'G'RI JAVOB!` yoki
-     `❌ NOTO'G'RI JAVOB … To'g'ri javob: C — 3 oy`, va bot shaxsiy chatga **to'liq javob kartasini**
-     yuboradi: variantlar ✅/❌ belgilari bilan, «💡 Nima uchun?» — to'liq izoh (qisqartirilmagan) va
-     manba. Botni hali ochmagan xodimga «Izohni olish uchun botga /start yozing» deb aytiladi;
-   * «test oxirida» rejimi: `✅ Javobingiz qabul qilindi.` — to'g'ri javob test yakunida ko'rsatiladi.
-   Shaxsiy chatda test yechilganda ham xuddi shu karta savol xabarining o'rnida chiqadi.
-4. **Bir savol = bitta javob.** Qayta bosilsa: `⚠️ Bu savolga siz allaqachon javob bergansiz.`
-   Bu baza darajasida ham kafolatlangan: `UNIQUE (user_id, test_id, test_question_id)`, xodimning
-   urinish qatorini `FOR UPDATE` bilan bloklash, `user_answers` jadvalida UPDATE'ni taqiqlovchi trigger.
-5. 24 soat (yoki belgilangan muddat) davomida istalgan xodim qo'shilishi mumkin. Muddat tugagach
-   (server vaqti, `now >= end_at`) javoblar qabul qilinmaydi, test avtomatik **EXPIRED** bo'ladi,
-   har bir savol xabarida (ruxsat bo'lsa) to'g'ri javob ✅ bilan va «💡 Nima uchun?» izohi ochiladi,
-   guruhga yakuniy xabar chiqadi. Foizlar va taqsimot faqat admin panel va hisobotlarda.
+* `/start` → xodim **avtomatik bazaga qo'shiladi va faol bo'ladi** (admin'ga xabar boradi; admin istalgan
+  vaqtda ⛔️ bloklashi yoki 🗑 o'chirishi mumkin — bloklangan xodim `/start` bilan qayta ochilmaydi).
+  Qo'lda tasdiqlash rejimi ⚙️ Sozlamalar → «Hammani avtomatik tasdiqlash» ni o'chirsa qaytadi.
+* **📚 Testlarim**: har bir test holati bilan — 🟢 Ishlanmagan · 🟡 Jarayonda · 🔵 Tugatilgan · 🔴 Muddati tugagan.
+* **▶️ TESTNI BOSHLASH** → `started_at = server vaqti`, `deadline = started_at + test vaqti`. Hisob
+  faqat server/baza vaqtida; bot qayta ishga tushsa yoki xodim chiqib ketsa ham vaqt davom etadi,
+  qaytganda **birinchi javob berilmagan savoldan** davom etadi. Har bir javobda `hozir >= deadline`
+  tekshiriladi; scheduler muddati o'tgan urinishlarni yopadi va xodimga `❌ TEST VAQTI TUGADI` + natija yuboradi.
+* Savol ko'rinishi (Quiz uslubi): `[3/30] Savol matni` → `📚 Manba: Konstitutsiya` → `○ A) …` variantlar,
+  har bir variant alohida tugma.
+* Variant bosilganda: xodim `callback.from_user.id` bo'yicha aniqlanadi → **uning** urinishi topiladi →
+  javob bazaga yoziladi → tekshiriladi → savol xabari natija oynasiga aylanadi:
+  ```
+  ❌ NOTO'G'RI JAVOB
 
-**Yangi a'zolar.** Telegram guruh sozlamasida «Chat history for new members» = **Hidden** bo'lsa,
-yangi qo'shilganlar o'zlaridan oldingi xabarlarni (test savollarini) ko'rmaydi. Shuning uchun:
-* yangi a'zo qo'shilganda bot guruhda «👋 Xush kelibsiz» va faol testlar ro'yxatini tugma bilan yuboradi;
-* guruhda `/test` buyrug'i faol testlarni ko'rsatadi;
-* tugma bot bilan shaxsiy chatni ochadi va xodim **o'sha testni** shu yerda davom ettiradi (guruhdagi
-  harflar bilan bir xil, javoblar o'sha testga yoziladi, bir savolga bitta javob qoidasi saqlanadi;
-  guruhda javob bergan savollari qayta so'ralmaydi).
-Tavsiya: guruh sozlamalarida **Edit → Chat history for new members → Visible** qiling.
+  Sizning javobingiz:
+  B) Fe
 
-**Nega native Telegram Poll emas?** Native quiz-poll'da natijalar har bir xodimning testdagi
-urinishiga bog'lanmaydi, «faqat test oxirida ko'rsatish» rejimi yo'q, oddiy (quiz bo'lmagan)
-so'rovnomada esa javobni qaytarib olish mumkin. Shuning uchun **custom inline keyboard** ishlatiladi:
-javob beruvchi har doim `callback.from_user.id` orqali aniqlanadi (callback ma'lumotida faqat
-xabar raqami va harf bor), har bir javob tekshiriladi va saqlanadi.
+  ✅ TO'G'RI JAVOB:
+  A) Co
 
-**Aralashtirish:** guruhdagi savol xabari hamma uchun bitta, shuning uchun savollar va variantlar
-tartibi har bir **guruh e'lonida bir marta** aralashtiriladi; har bir javob uchun xodim ko'rgan harf
-(`selected_display`) va haqiqiy variant (`selected_option`, `selected_option_id`) saqlanadi.
-Shaxsiy chat rejimida esa har bir xodim uchun alohida aralashtiriladi.
+  📚 Manba: Kimyo
+  💡 Izoh: …                       [✖️ CHIQISH]
+  ```
+  Maqtov so'zlari ishlatilmaydi. Javobni o'zgartirib bo'lmaydi (`⚠️ Bu savolga siz allaqachon javob bergansiz.`).
+* **✖️ CHIQISH** testdan chiqish emas: faqat natija oynasini yopadi, urinish va javob saqlanadi, o'sha
+  xabar keyingi savolga aylanadi. Oxirgi savoldan keyin — `🎯 TEST YAKUNLANDI` (savollar, to'g'ri,
+  noto'g'ri, foiz, sarflangan vaqt) va aralash testda **📚 MANBA BO'YICHA NATIJA**.
 
-**Ko'p foydalanuvchi:** har bir xodimning alohida urinish qatori bor, holat faqat PostgreSQL'da;
-50/100/500 kishi bir vaqtda javob berishi mumkin (testda 40 kishi bir vaqtda + bir kishining
-ikki marta bosishi tekshirilgan).
+### Guruhda test
 
-**Avtomatik savollar:** material yuklanishi bilan bot undan avtomatik savollar tuzadi (soni:
-⚙️ Sozlamalar → «🧠 Avto-savollar soni», standart 20) va **⚡ Shu materialdan test tuzish**
-tugmasini beradi: savollar soni → guruhni tanlash → ko'rib chiqish → ▶️ Guruhda boshlash.
+Admin: test sahifasi → **▶️ Guruhda boshlash** (yoki yaratishda «🏢 Guruhga»). Guruhga bitta xabar
+chiqadi: `📚 YANGI TEST` · nom · `📝 30 ta savol` · `⏱ 24 soat` · **[▶️ TESTNI BOSHLASH]**.
+Tugma bosilganda xodim faqat `callback.from_user.id` bo'yicha aniqlanadi, unga **alohida urinish**
+ochiladi (shaxsiy vaqti shu paytdan boshlanadi) va Telegram bot bilan **shaxsiy chatni** ochadi —
+savollar o'sha yerda, boshqa a'zolar javoblarni ko'rmaydi. Ali, Vali, Hasan bir vaqtda bossa ham
+har birining urinishi va javoblari alohida (`test_attempts` + `user_answers`, qatorni `FOR UPDATE`
+bilan bloklash, `UNIQUE(attempt_id, test_question_id)`).
+Oldingi versiyada guruhga savollari bilan yuborilgan testlar tugaguncha avvalgidek ishlaydi.
+
+Yangi a'zolar: bot guruhda «👋 Xush kelibsiz» va faol testlar ro'yxatini tugma bilan yuboradi;
+guruhda `/test` faol testlarni ko'rsatadi.
+
+### Admin: boshqaruv va 📋 Natijalar
+
+* Test sahifasi: ⏸ **Deaktiv** / ▶️ **Aktiv**, ⏱ **Vaqtni o'zgartirish** (6/12/24 soat, 2 kun;
+  jarayondagilar uchun «boshlagan vaqt + yangi vaqt»), ⛔ **Yopish** (majburiy tugatish),
+  🔁 **Qayta ochish**, 🗑 **O'chirish** (natijalari bilan, tasdiqlash so'raladi), Excel hisobot.
+* **📋 Natijalar** → test → har bir xodim: `30 ta savol · ✅ 26 · ❌ 4 · 87%` → xodim → har bir savol:
+  `Tanladi: A) Co · Natija: ✅ To'g'ri · Manba: Kimyo` (xato bo'lsa to'g'ri javob ham), manba
+  bo'yicha natija. Shu yerda: **⏱ Qo'shimcha vaqt** (+6/12/24 soat, +2 kun; vaqti tugagan tugallanmagan
+  urinish qayta ochiladi), **🔁 Qayta topshirishga ruxsat** (bir martalik, yangi urinish; eski javoblar
+  o'zgarmaydi), **🚫 Testni xodimdan olib tashlash**.
+* Excel hisobotda «Manba bo'yicha» varag'i va har bir javobda manba/fayl ustunlari.
 
 ---
 
@@ -304,20 +327,20 @@ Ixtiyoriy: material sahifasida **🧠 Savollar yaratish (AI)** → 5/10/15/20 �
 manbali savollar qo'shiladi (🟡 tasdiq kutadi).
 
 ### 2) Birinchi testni yaratish
-`/admin` → **📝 Testlar** → **➕ Yangi test yaratish** → ustaning savollariga javob bering →
-**✅ Testni yaratish** (yoki material sahifasida **⚡ Shu materialdan test tuzish**). Bot savollarni
-avval **bankdan**, yetmasa **AI yordamida faqat tanlangan manbalardan** yig'adi.
-Keyin: **👀 Savollarni ko'rish** → ✅ / ❌ / 🔄 (yoki «Hammasini tasdiqlash») → **✅ Tayyor (READY)** →
-**▶️ Guruhda boshlash** (test guruhning o'zida ishlanadi) yoki **📢 E'lon qilish** (shaxsiy chat rejimi).
+`/admin` → **➕ Test yaratish** → nom → fayllarni yuboring → **🔀 Aralashtirib test tuzish** → son →
+vaqt → kimlarga → **✅ Testni yaratish**. Bot savollarni faqat yuborilgan fayllardan tuzadi va testni
+darhol tanlangan xodimlarga beradi (batafsil: «Test yaratish: bir nechta fayldan aralash test»).
+Kengaytirilgan sozlash (qiyinlik, yangiliklar %, mavzu, o'tish bali, savollarni qo'lda ko'rib chiqish):
+**📝 Testlar → 🛠 Bankdan test (kengaytirilgan sozlash)**.
 
 ### 3) Xodimlar qanday qo'shiladi
-* **Guruh orqali (tavsiya):** botni ish guruhiga qo'shing va guruhda `/register` yuboring (faqat admin).
-  Xodim guruhdagi tugma yoki `/start` orqali botni ochadi → F.I.Sh. kiritadi → guruh a'zosi
-  bo'lgani tekshiriladi → **avtomatik tasdiqlanadi** (sozlamalarda o'chirish mumkin).
-* **To'g'ridan-to'g'ri:** xodim botga `/start` yozadi → F.I.Sh. → admin'ga
-  «🆕 Yangi xodim» xabari keladi → **✅ Tasdiqlash**.
+Xodim botga `/start` yozadi — shu zahoti bazaga qo'shiladi va **faol** bo'ladi, «📚 Testlarim»
+ochiladi; admin'ga «Yangi xodim … avtomatik faollashtirildi» xabari keladi. Admin **👥 Xodimlar**
+bo'limida xodimni ⛔️ bloklashi, 🗑 o'chirishi, qayta faollashtirishi mumkin. Guruhda `/register`
+(faqat admin) guruhni ro'yxatga oladi — guruh testlari shu guruh a'zolariga ko'rinadi.
 
 ### 4) Statistikani ko'rish
+* **📋 Natijalar** → test → xodim → har bir javob va manbasi.
 * Test sahifasi → **👥 Ishtirokchilar**: jami, boshlaganlar, tugatganlar, tugatmaganlar,
   qatnashmaganlar, o'rtacha natija → xodimni bosing → uning **har bir javobi** (✅/❌, tanlagan va to'g'ri harf).
 * Test sahifasi → **📊 Savollar tahlili** (har savol bo'yicha A/B/C/D taqsimoti) →
@@ -370,9 +393,14 @@ Hammasini konteynerda ishga tushirish: `docker compose --profile bot up --build`
 **Jadvallar:** `users`, `groups`, `group_members`, `materials`, `news`, `source_chunks`
 (matn bo'laklari + `embedding` + `tsvector`), `topics`, `questions` (bank, versiyalanadi),
 `tests`, `test_materials`, `test_questions` (snapshot), `question_options` (snapshot variantlari),
-`test_attempts`, `user_answers` (`user_id, telegram_id, test_id, test_question_id, selected_option,
-selected_option_id, correct_option, is_correct, answered_at`; `UNIQUE(user_id, test_id, test_question_id)`;
+`test_sources` (test manbalari: `source_name, original_file_name, file_id, material_id`),
+`test_assignments` (tanlangan xodimlar, olib tashlanganlar, qayta topshirish ruxsati),
+`test_attempts` (= «user_tests»: `status, started_at, deadline_at, completed_at, score_percent`),
+`user_answers` (`attempt_id, user_id, telegram_id, test_id, test_question_id, selected_option,
+selected_option_id, correct_option, is_correct, answered_at`; `UNIQUE(attempt_id, test_question_id)`;
 UPDATE trigger bilan taqiqlangan), `group_test_posts`, `group_question_messages`, `bot_settings`;
+`tests.duration_seconds` (shaxsiy vaqt), `tests.audience`, `tests.paused`;
+`test_questions.source_id / source_name / source_file`; `users.status` = pending/active/inactive/blocked;
 `material_chunks` — materiallarga tegishli bo'laklar uchun view.
 Tashqi kalitlar, CHECK cheklovlari, indekslar (shu jumladan HNSW va GIN) mavjud.
 
@@ -509,12 +537,16 @@ Dockerfile, railway.json, docker-compose.yml, requirements*.txt, .env.example
 
 * **OCR yo'q:** skanerlangan (rasm) PDF'lardan matn olinmaydi — admin aniq xato xabarini oladi.
 * **PDF hisobot** yo'q (XLSX va CSV mavjud).
-* FSM holati (masalan, test yaratish ustasining oraliq qadamlari) xotirada saqlanadi: deploy/qayta
-  ishga tushishda tugallanmagan **usta** qadamlari yo'qoladi. Test urinishlari, javoblar va barcha
-  ma'lumotlar PostgreSQL'da — ular yo'qolmaydi, xodim testni davom ettira oladi.
+* FSM holati (ustaning oraliq qadamlari) xotirada saqlanadi: deploy/qayta ishga tushishda tugallanmagan
+  **usta** qadamlari yo'qoladi. «➕ Test yaratish»da esa qoralama test va yuklangan fayllar birinchi
+  qadamdanoq bazada (test sahifasidan davom ettirish yoki o'chirish mumkin). Xodimlar, testlar,
+  savollar, javoblar, deadline, progress va natijalar PostgreSQL'da — restartda yo'qolmaydi.
+* Fayl o'qish va savol tuzish fonda ishlaydi; agar aynan shu paytda bot qayta ishga tushsa, jarayon
+  to'xtaydi (fayl/test holati ❌ bo'lib qoladi) — materialni «🔄 Qayta ishlash», testni «🧠 Savollarni
+  yig'ish» bilan davom ettiring.
+* Muddatdan oldin eslatma test oynasining tugashiga qarab yuboriladi; har bir xodimning shaxsiy
+  24 soatlik vaqti uchun alohida eslatma yo'q (vaqt tugaganda xabar keladi).
 * Telegram Bot API fayl yuklab olish chegarasi — 20 MB.
 * Xodim ko'p guruhda bo'lishi mumkin; guruh a'zoligi bot ko'rgan hodisalar asosida aniqlanadi.
-* **Qayta topshirish yo'q:** bir savolga bitta javob qoidasi bo'yicha yakunlangan testni qayta ishlab bo'lmaydi.
-* Guruh rejimida savollar/variantlar tartibi guruh uchun bir marta aralashtiriladi (xabar hamma uchun bitta).
-* Guruhga xabar yuborish Telegram limiti (~20 xabar/daqiqa) sababli 20 savolli test guruhga taxminan
-  1 daqiqada to'liq chiqadi; bot limitni o'zi kutadi va qayta ishga tushsa davom ettiradi.
+* **Qayta topshirish** faqat admin ruxsati bilan (bir martalik); har bir urinish ichida bir savolga bitta javob.
+* Telegram tugma matni uzun variantlarni qisqartirib ko'rsatadi — variantning to'liq matni xabarning o'zida.

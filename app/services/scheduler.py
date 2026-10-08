@@ -21,7 +21,7 @@ from app.config import get_settings
 from app.locales import t
 from app.models import DeliveryMode, ParticipationStatus, Test, TestStatus
 from app.services import group_tests, settings_service
-from app.services.attempts import expire_attempts
+from app.services.attempts import expire_attempts_list
 from app.services.notifications import announce_test, notify_admins, remind_unfinished
 from app.services.test_builder import activate_due, expire_due
 from app.statistics.participation import participation
@@ -68,10 +68,13 @@ async def run_tick(bot: Bot | None, session_maker: async_sessionmaker[AsyncSessi
     async with session_maker() as session:
         report["activated"] = await activate_due(session, now)
         report["expired_tests"] = await expire_due(session, now)
-        report["expired_attempts"] = await expire_attempts(session, None, now)
+        expired = await expire_attempts_list(session, None, now)
+        report["expired_attempts"] = len(expired)
 
         if bot is None:
             return report
+        for attempt in expired:
+            await notify_time_over(bot, session, attempt)
 
         # Announce active tests not yet announced (covers immediate publish and scheduled start).
         to_announce = (
@@ -132,6 +135,34 @@ async def run_tick(bot: Bot | None, session_maker: async_sessionmaker[AsyncSessi
                 if test:
                     await _send_summary(bot, session, test)
     return report
+
+
+async def notify_time_over(bot: Bot, session: AsyncSession, attempt) -> None:
+    """Personal time ran out: tell the employee (❌ TEST VAQTI TUGADI) and show the result."""
+    from aiogram.exceptions import TelegramBadRequest
+
+    from app.handlers.formatting import result_text
+    from app.models import User
+    from app.services.notifications import safe_send
+
+    user = await session.get(User, attempt.user_id)
+    test = await session.get(Test, attempt.test_id)
+    if user is None or test is None or not user.has_private_chat:
+        return
+    if attempt.chat_id and attempt.last_message_id:
+        try:  # the last question can no longer be answered
+            await bot.edit_message_reply_markup(chat_id=attempt.chat_id, message_id=attempt.last_message_id)
+        except TelegramBadRequest:
+            pass
+        except Exception as exc:
+            logger.debug("Could not disable question buttons", extra={"error": str(exc)[:100]})
+    await safe_send(bot, user.telegram_id, result_text(test, attempt, user, await _source_rows(session, attempt)))
+
+
+async def _source_rows(session: AsyncSession, attempt) -> list:
+    from app.statistics.sources import attempt_source_breakdown
+
+    return await attempt_source_breakdown(session, attempt.id)
 
 
 async def _send_summary(bot: Bot, session: AsyncSession, test: Test) -> None:

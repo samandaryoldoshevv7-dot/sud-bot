@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import timedelta
 
 from aiogram import Bot, F, Router
 from aiogram.exceptions import TelegramBadRequest
@@ -18,18 +19,17 @@ from app.keyboards.callbacks import AdminCB
 from app.keyboards.common import back_menu_row, cancel_kb, confirm_kb, kb, pager
 from app.locales import t
 from app.models import (
+    DURATION_CHOICES,
     AttemptStatus,
     DeliveryMode,
     GenerationStatus,
     Group,
     ParticipationStatus,
     Test,
-    TestAttempt,
     TestStatus,
     User,
 )
 from app.reports.builder import build_test_report_csv, build_test_report_xlsx
-from app.services import attempts as attempt_service
 from app.services import background, group_tests
 from app.services import groups as group_service
 from app.services import test_builder as tb
@@ -79,7 +79,7 @@ async def cb_list(callback: CallbackQuery, callback_data: AdminCB, session: Asyn
     lines = [t("tests.section", total=total), ""]
     if not tests:
         lines.append(t("tests.empty"))
-    rows = [[(t("tests.btn.new"), AdminCB(s="tst_new"))]]
+    rows = [[(t("menu.create_test"), AdminCB(s="ct"))], [(t("tests.btn.new_advanced"), AdminCB(s="tst_new"))]]
     filters = []
     for st in (TestStatus.DRAFT, TestStatus.ACTIVE, TestStatus.EXPIRED):
         mark = "• " if status == st else ""
@@ -102,10 +102,11 @@ async def render_test(target, session: AsyncSession, test_id: int) -> None:
     if test is None:
         await show(target, t("common.not_found"), kb(back_menu_row("tst")))
         return
+    from app.handlers.admin.create_test import audience_label
+
     total, approved = await tb.question_counts(session, test_id)
-    sources = await tb.test_material_titles(session, test)
-    group = await session.get(Group, test.group_id) if test.group_id else None
-    hours = round((test.deadline_at - test.starts_at).total_seconds() / 3600, 1)
+    sources = await tb.source_names(session, test_id) or await tb.test_material_titles(session, test)
+    open_ended = test.deadline_at - test.starts_at >= tb.OPEN_WINDOW - timedelta(days=1)
     lines = [
         t("tests.detail.title", id=test.id, title=esc(test.title)),
         t("tests.detail.status", status=f"{STATUS_EMOJI[test.status]} {t(f'test_status.{test.status.value}')}"),
@@ -121,16 +122,14 @@ async def render_test(target, session: AsyncSession, test_id: int) -> None:
         t(
             "tests.detail.sources",
             s=t("wiz.all_materials")
-            if test.use_all_materials
-            else esc(", ".join(truncate(x, 30) for x in sources) or "—"),
+            if test.use_all_materials and not sources
+            else esc(" + ".join(truncate(x, 30) for x in sources) or "—"),
         ),
-        t("tests.detail.audience", a=esc(group.title) if group else t("wiz.all_employees")),
-        t(
-            "tests.detail.time",
-            start=fmt_dt(test.starts_at),
-            deadline=fmt_dt(test.deadline_at),
-            duration=fmt_hours(hours),
-        ),
+        t("tests.detail.audience", a=await audience_label(session, test)),
+        t("tests.detail.duration", d=fmt_hours(test.duration_seconds / 3600)),
+        t("tests.detail.window_open", start=fmt_dt(test.starts_at))
+        if open_ended
+        else t("tests.detail.window", start=fmt_dt(test.starts_at), deadline=fmt_dt(test.deadline_at)),
         t(
             "tests.detail.flags",
             rq=_yn(test.randomize_questions),
@@ -147,6 +146,8 @@ async def render_test(target, session: AsyncSession, test_id: int) -> None:
         lines += ["", t("tests.detail.generation_failed", error=esc(_friendly_error(test.generation_error)))]
     if test.status == TestStatus.READY and test.published_at:
         lines += ["", t("tests.detail.scheduled", start=fmt_dt(test.starts_at))]
+    if test.paused:
+        lines += ["", t("tests.detail.paused")]
 
     rows = []
     if test.status == TestStatus.DRAFT:
@@ -160,6 +161,7 @@ async def render_test(target, session: AsyncSession, test_id: int) -> None:
             rows.append([(t("tests.btn.approve_all"), AdminCB(s="tst_apall", id=test.id))])
         if total == test.question_count and approved == total:
             rows.append([(t("tests.btn.ready"), AdminCB(s="tst_ready", id=test.id))])
+        rows.append([(t("tests.btn.duration"), AdminCB(s="tst_dur", id=test.id))])
         rows.append([(t("tests.btn.delete"), AdminCB(s="tst_del", id=test.id))])
     elif test.status == TestStatus.READY:
         if test.published_at is None:
@@ -171,15 +173,17 @@ async def render_test(target, session: AsyncSession, test_id: int) -> None:
                     (t("tests.btn.to_draft"), AdminCB(s="tst_draft", id=test.id)),
                 ]
             )
+            rows.append([(t("tests.btn.duration"), AdminCB(s="tst_dur", id=test.id))])
             rows.append([(t("tests.btn.delete"), AdminCB(s="tst_del", id=test.id))])
         else:
             rows.append(
                 [
-                    (t("tests.btn.extend"), AdminCB(s="tst_ext", id=test.id)),
+                    (t("tests.btn.duration"), AdminCB(s="tst_dur", id=test.id)),
                     (t("tests.btn.close"), AdminCB(s="tst_close", id=test.id)),
                 ]
             )
     else:
+        rows.append([(t("menu.results"), AdminCB(s="res_t", id=test.id))])
         rows.append([(t("tests.btn.participants"), AdminCB(s="tst_part", id=test.id, v="all"))])
         rows.append(
             [
@@ -196,13 +200,20 @@ async def render_test(target, session: AsyncSession, test_id: int) -> None:
         if test.status == TestStatus.ACTIVE:
             rows.append(
                 [
-                    (t("tests.btn.extend"), AdminCB(s="tst_ext", id=test.id)),
-                    (t("tests.btn.close"), AdminCB(s="tst_close", id=test.id)),
+                    (
+                        t("tests.btn.resume") if test.paused else t("tests.btn.pause"),
+                        AdminCB(s="tst_pause", id=test.id),
+                    ),
+                    (t("tests.btn.duration"), AdminCB(s="tst_dur", id=test.id)),
                 ]
             )
+            rows.append([(t("tests.btn.close"), AdminCB(s="tst_close", id=test.id))])
             rows.append([(t("tests.btn.start_in_group"), AdminCB(s="tst_grp", id=test.id))])
             rows.append([(t("tests.btn.announce"), AdminCB(s="tst_ann", id=test.id))])
+        else:
+            rows.append([(t("tests.btn.reopen"), AdminCB(s="tst_reopen", id=test.id))])
         rows.append([(t("tests.btn.preview", n=total), AdminCB(s="tst_rv", id=test.id, p=1))])
+        rows.append([(t("tests.btn.delete"), AdminCB(s="tst_del", id=test.id))])
     rows.append([(t("btn.refresh"), AdminCB(s="tst_v", id=test.id))])
     rows.append(back_menu_row("tst"))
     await show(target, "\n".join(lines), kb(*rows))
@@ -648,9 +659,10 @@ async def cb_delete(callback: CallbackQuery, callback_data: AdminCB, session: As
     if test is None:
         await callback.answer(t("common.not_found"), show_alert=True)
         return
+    key = "tests.delete_confirm" if test.published_at is None else "tests.delete_confirm_results"
     await show(
         callback,
-        t("tests.delete_confirm", title=esc(test.title)),
+        t(key, title=esc(test.title)),
         confirm_kb(AdminCB(s="tst_del_ok", id=test.id), AdminCB(s="tst_v", id=test.id)),
     )
 
@@ -748,45 +760,81 @@ async def cb_participants(callback: CallbackQuery, callback_data: AdminCB, sessi
 
 @router.callback_query(AdminCB.filter(F.s == "tst_pu"))
 async def cb_participant_attempt(callback: CallbackQuery, callback_data: AdminCB, session: AsyncSession) -> None:
-    attempt = await session.get(TestAttempt, callback_data.id)
-    if attempt is None:
+    from app.handlers.admin.results import render_attempt
+
+    await render_attempt(callback, session, callback_data.id)
+
+
+# ------------------------------------------------------------------------------ management
+
+
+@router.callback_query(AdminCB.filter(F.s == "tst_dur"))
+async def cb_duration(callback: CallbackQuery, callback_data: AdminCB, session: AsyncSession) -> None:
+    test = await session.get(Test, callback_data.id)
+    if test is None:
         await callback.answer(t("common.not_found"), show_alert=True)
         return
-    user = await session.get(User, attempt.user_id)
-    assert user is not None
-    answers = await attempt_service.answers_for_attempt(session, attempt)
-    lines = [
-        t("tests.attempt.header", name=user_line(user), title=esc(attempt.test.title), no=attempt.attempt_no),
-        t(
-            "tests.attempt.body",
-            status=t(f"attempt_status.{attempt.status.value}"),
-            score=pct(attempt.score_percent),
-            correct=attempt.correct_count,
-            wrong=attempt.incorrect_count,
-            answered=attempt.answered_count,
-            total=attempt.total_questions,
-            time=fmt_duration(attempt.duration_seconds),
-            started=fmt_dt(attempt.started_at),
-            completed=fmt_dt(attempt.completed_at),
-        ),
-    ]
-    if answers:
-        lines += ["", t("tests.attempt.answers_title")]
-        for answer, tq in answers:
-            lines.append(
-                t(
-                    "tests.attempt.answer_item",
-                    mark="✅" if answer.is_correct else "❌",
-                    n=answer.position + 1,
-                    q=esc(truncate(tq.question_text, 110)),
-                    sel=answer.selected_display,
-                    corr=answer.correct_display or answer.correct_option,
-                    topic=esc(tq.topic_name or "—"),
-                )
+    rows = [
+        [
+            (
+                (("• " if s == test.duration_seconds else "") + fmt_hours(s / 3600)),
+                AdminCB(s="tst_dur_go", id=test.id, v=str(s)),
             )
-    rows = [[(t("emp_admin.btn.profile"), AdminCB(s="emp_v", id=user.id))]]
-    rows.append(back_menu_row("tst_part", id_=int(callback_data.v or attempt.test_id), v="all"))
-    await show(callback, "\n".join(lines), kb(*rows))
+        ]
+        for s in DURATION_CHOICES
+    ]
+    await show(callback, t("tests.duration_prompt", d=fmt_hours(test.duration_seconds / 3600)),
+               kb(*rows, back_menu_row("tst_v", id_=test.id)))  # fmt: skip
+
+
+@router.callback_query(AdminCB.filter(F.s == "tst_dur_go"))
+async def cb_duration_go(callback: CallbackQuery, callback_data: AdminCB, session: AsyncSession) -> None:
+    try:
+        adjusted = await tb.set_duration(session, callback_data.id, int(callback_data.v or 0))
+    except TestStateError as exc:
+        await callback.answer(t(f"test_error.{exc.code}"), show_alert=True)
+        return
+    await callback.answer(t("tests.duration_done", n=adjusted), show_alert=True)
+    await render_test(callback, session, callback_data.id)
+
+
+@router.callback_query(AdminCB.filter(F.s == "tst_pause"))
+async def cb_pause(callback: CallbackQuery, callback_data: AdminCB, session: AsyncSession) -> None:
+    test = await session.get(Test, callback_data.id)
+    if test is None:
+        await callback.answer(t("common.not_found"), show_alert=True)
+        return
+    try:
+        await tb.set_paused(session, test.id, not test.paused)
+    except TestStateError as exc:
+        await callback.answer(t(f"test_error.{exc.code}"), show_alert=True)
+        return
+    await callback.answer(t("tests.paused_toast") if test.paused else t("tests.resumed_toast"), show_alert=True)
+    await render_test(callback, session, test.id)
+
+
+@router.callback_query(AdminCB.filter(F.s == "tst_reopen"))
+async def cb_reopen(callback: CallbackQuery, callback_data: AdminCB, session: AsyncSession) -> None:
+    test = await session.get(Test, callback_data.id)
+    if test is None:
+        await callback.answer(t("common.not_found"), show_alert=True)
+        return
+    await show(
+        callback,
+        t("tests.reopen_confirm", title=esc(test.title)),
+        confirm_kb(AdminCB(s="tst_reopen_ok", id=test.id), AdminCB(s="tst_v", id=test.id)),
+    )
+
+
+@router.callback_query(AdminCB.filter(F.s == "tst_reopen_ok"))
+async def cb_reopen_ok(callback: CallbackQuery, callback_data: AdminCB, session: AsyncSession) -> None:
+    try:
+        await tb.reopen_test(session, callback_data.id)
+    except TestStateError as exc:
+        await callback.answer(t(f"test_error.{exc.code}"), show_alert=True)
+        return
+    await callback.answer(t("tests.reopened_toast"), show_alert=True)
+    await render_test(callback, session, callback_data.id)
 
 
 @router.callback_query(AdminCB.filter(F.s == "tst_qs"))

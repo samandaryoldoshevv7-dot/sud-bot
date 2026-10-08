@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 import random
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 from enum import Enum
 
@@ -20,12 +20,15 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import (
+    AssignmentStatus,
     AttemptStatus,
     Group,
     GroupMember,
     QuestionOption,
     Test,
+    TestAssignment,
     TestAttempt,
+    TestAudience,
     TestQuestion,
     TestStatus,
     User,
@@ -47,6 +50,8 @@ class StartError(str, Enum):
     NOT_IN_GROUP = "not_in_group"
     ALREADY_COMPLETED = "already_completed"
     NO_QUESTIONS = "no_questions"
+    PAUSED = "paused"
+    NOT_ASSIGNED = "not_assigned"
 
 
 @dataclass
@@ -62,6 +67,7 @@ class AnswerOutcome(str, Enum):
     NOT_IN_PROGRESS = "not_in_progress"
     EXPIRED = "expired"
     INVALID = "invalid"
+    PAUSED = "paused"
 
 
 @dataclass
@@ -75,12 +81,39 @@ class AnswerResult:
     finished: bool = False
 
 
+def _source_key(tq: TestQuestion) -> object:
+    return tq.source_id or getattr(tq, "source_name", "") or None
+
+
+def interleave_by_source(questions: list[TestQuestion], rng: random.Random) -> list[TestQuestion]:
+    """Shuffle while mixing sources: the next question never comes from the same source as the
+    previous one unless no other source has questions left (e.g. 1-Konstitutsiya, 2-Mehnat kodeksi,
+    3-Ma'muriy kodeks, 4-Konstitutsiya ...)."""
+    buckets: dict[object, list[TestQuestion]] = {}
+    for tq in questions:
+        buckets.setdefault(_source_key(tq), []).append(tq)
+    for bucket in buckets.values():
+        rng.shuffle(bucket)
+    order: list[TestQuestion] = []
+    last: object = object()
+    while any(buckets.values()):
+        candidates = [k for k, b in buckets.items() if b and k != last] or [k for k, b in buckets.items() if b]
+        most = max(len(buckets[k]) for k in candidates)
+        key = rng.choice([k for k in candidates if len(buckets[k]) == most])
+        order.append(buckets[key].pop())
+        last = key
+    return order
+
+
 def build_layout(
     questions: list[TestQuestion], randomize_questions: bool, randomize_options: bool, rng: random.Random
 ) -> list[dict]:
     order = list(questions)
     if randomize_questions:
-        rng.shuffle(order)
+        if len({_source_key(tq) for tq in order}) > 1:
+            order = interleave_by_source(order, rng)
+        else:
+            rng.shuffle(order)
     layout = []
     for tq in order:
         letters = list(tq.options.keys())
@@ -88,6 +121,11 @@ def build_layout(
             rng.shuffle(letters)
         layout.append({"tq": tq.id, "opts": letters})
     return layout
+
+
+def attempt_deadline(test: Test, started_at: datetime) -> datetime:
+    """Personal deadline: START time + the test duration (never after the test is closed)."""
+    return min(started_at + timedelta(seconds=test.duration_seconds), test.deadline_at)
 
 
 def display_to_original(layout_item: dict, display_letter: str) -> str | None:
@@ -126,17 +164,36 @@ async def audience_group_ids(session: AsyncSession, test: Test) -> set[int]:
     return ids
 
 
-async def user_in_test_audience(session: AsyncSession, test: Test, user: User) -> bool:
-    if test.group_id is None:
-        return True
-    group_ids = await audience_group_ids(session, test)
+async def get_assignment(session: AsyncSession, test_id: int, user_id: int) -> TestAssignment | None:
+    stmt = select(TestAssignment).where(TestAssignment.test_id == test_id, TestAssignment.user_id == user_id)
+    return (await session.execute(stmt)).scalar_one_or_none()
+
+
+async def _member_of_any(session: AsyncSession, user_id: int, group_ids: set[int]) -> bool:
+    if not group_ids:
+        return False
     stmt = (
         select(func.count())
         .select_from(GroupMember)
         .join(Group, Group.id == GroupMember.group_id)
-        .where(GroupMember.group_id.in_(group_ids), GroupMember.user_id == user.id, GroupMember.is_member.is_(True))
+        .where(GroupMember.group_id.in_(group_ids), GroupMember.user_id == user_id, GroupMember.is_member.is_(True))
     )
     return bool((await session.execute(stmt)).scalar_one())
+
+
+async def user_in_test_audience(session: AsyncSession, test: Test, user: User) -> bool:
+    """Was this test given to the employee? (all employees / a group / selected employees, minus
+    employees the admin took the test away from)."""
+    assignment = await get_assignment(session, test.id, user.id)
+    if assignment is not None and assignment.status == AssignmentStatus.REMOVED:
+        return False
+    if assignment is not None:
+        return True  # explicitly assigned (selected / single employee) or granted a retake
+    if test.audience == TestAudience.USERS:
+        return False
+    if test.audience == TestAudience.ALL and test.group_id is None:
+        return True
+    return await _member_of_any(session, user.id, await audience_group_ids(session, test))
 
 
 async def get_in_progress(session: AsyncSession, test_id: int, user_id: int) -> TestAttempt | None:
@@ -180,8 +237,13 @@ async def start_attempt(
         return StartResult(error=StartError.NOT_ACTIVE)
     if now < test.starts_at:
         return StartResult(error=StartError.NOT_STARTED_YET)
+    if test.paused:
+        return StartResult(error=StartError.PAUSED)
     if not await user_in_test_audience(session, test, user):
-        return StartResult(error=StartError.NOT_IN_GROUP)
+        assignment = await get_assignment(session, test_id, user.id)
+        if test.audience == TestAudience.GROUP and assignment is None:
+            return StartResult(error=StartError.NOT_IN_GROUP)
+        return StartResult(error=StartError.NOT_ASSIGNED)
 
     previous = (
         await session.execute(
@@ -190,9 +252,12 @@ async def start_attempt(
             )
         )
     ).all()
-    # One answer per (user, test, question) is final, so a finished attempt can never be retaken.
+    # Answers are final, so a finished attempt is retaken only when an admin allowed it (once).
     if any(st != AttemptStatus.IN_PROGRESS for st, _ in previous):
-        return StartResult(error=StartError.ALREADY_COMPLETED)
+        assignment = await get_assignment(session, test_id, user.id)
+        if assignment is None or not assignment.retake_allowed:
+            return StartResult(error=StartError.ALREADY_COMPLETED)
+        assignment.retake_allowed = False  # committed together with the new attempt
     attempt_no = max((n for _, n in previous), default=0) + 1
 
     questions = list(
@@ -213,7 +278,7 @@ async def start_attempt(
         attempt_no=attempt_no,
         status=AttemptStatus.IN_PROGRESS,
         started_at=now,
-        deadline_at=test.deadline_at,
+        deadline_at=attempt_deadline(test, now),
         total_questions=len(questions),
         layout=layout or build_layout(questions, test.randomize_questions, test.randomize_options, rng),
         chat_id=chat_id,
@@ -289,6 +354,9 @@ async def submit_answer(
         await finalize_attempt(session, attempt, AttemptStatus.EXPIRED, now)
         await session.commit()
         return AnswerResult(AnswerOutcome.EXPIRED, attempt=attempt, finished=True)
+    if (await session.get(Test, attempt.test_id)).paused:  # type: ignore[union-attr]
+        await session.commit()
+        return AnswerResult(AnswerOutcome.PAUSED, attempt=attempt)
     answered = await answered_question_ids(session, attempt.id)
     if position != next_unanswered_index(attempt.layout, answered) or position >= len(attempt.layout):
         await session.commit()
@@ -374,6 +442,12 @@ async def finalize_attempt(
 
 async def expire_attempts(session: AsyncSession, test_id: int | None = None, now: datetime | None = None) -> int:
     """Expire IN_PROGRESS attempts whose deadline passed (or all of a closed test)."""
+    return len(await expire_attempts_list(session, test_id, now))
+
+
+async def expire_attempts_list(
+    session: AsyncSession, test_id: int | None = None, now: datetime | None = None
+) -> list[TestAttempt]:
     now = now or utcnow()
     stmt = (
         select(TestAttempt)
@@ -390,7 +464,7 @@ async def expire_attempts(session: AsyncSession, test_id: int | None = None, now
     await session.commit()
     if attempts:
         logger.info("Attempts expired", extra={"count": len(attempts), "test_id": test_id})
-    return len(attempts)
+    return attempts
 
 
 async def set_message_ref(session: AsyncSession, attempt_id: int, chat_id: int, message_id: int) -> None:
@@ -422,53 +496,166 @@ async def answers_for_attempt(session: AsyncSession, attempt: TestAttempt) -> li
     return [(a, q) for a, q in await session.execute(stmt)]
 
 
-async def available_tests_for_user(
-    session: AsyncSession, user: User, now: datetime | None = None
-) -> list[tuple[Test, TestAttempt | None]]:
-    """ACTIVE tests the employee may take, with their latest attempt (if any)."""
-    now = now or utcnow()
-    tests = list(
-        (
-            await session.execute(
-                select(Test)
-                .where(Test.status == TestStatus.ACTIVE, Test.starts_at <= now, Test.deadline_at > now)
-                .order_by(Test.deadline_at)
-            )
-        )
-        .scalars()
-        .all()
+async def _user_group_ids(session: AsyncSession, user_id: int) -> set[int]:
+    rows = await session.execute(
+        select(GroupMember.group_id).where(GroupMember.user_id == user_id, GroupMember.is_member.is_(True))
     )
+    return set(rows.scalars().all())
+
+
+async def _visible(session: AsyncSession, tests: list[Test], user: User) -> list[Test]:
     if not tests:
         return []
-    group_ids = set(
-        (
+    assignments = {
+        a.test_id: a
+        for a in (
             await session.execute(
-                select(GroupMember.group_id).where(GroupMember.user_id == user.id, GroupMember.is_member.is_(True))
+                select(TestAssignment).where(
+                    TestAssignment.user_id == user.id, TestAssignment.test_id.in_([x.id for x in tests])
+                )
             )
-        )
-        .scalars()
-        .all()
-    )
+        ).scalars()
+    }
+    group_ids = await _user_group_ids(session, user.id)
     visible = []
     for test in tests:
-        if test.group_id is None or (await audience_group_ids(session, test)) & group_ids:
+        assignment = assignments.get(test.id)
+        if assignment is not None:
+            if assignment.status == AssignmentStatus.ASSIGNED:
+                visible.append(test)
+            continue
+        if test.audience == TestAudience.USERS:
+            continue
+        if (test.audience == TestAudience.ALL and test.group_id is None) or (
+            await audience_group_ids(session, test)
+        ) & group_ids:
             visible.append(test)
-    tests = visible
-    attempts = (
+    return visible
+
+
+async def _latest_attempts(session: AsyncSession, user_id: int, test_ids: list[int]) -> dict[int, TestAttempt]:
+    latest: dict[int, TestAttempt] = {}
+    if not test_ids:
+        return latest
+    rows = await session.execute(
+        select(TestAttempt)
+        .where(TestAttempt.user_id == user_id, TestAttempt.test_id.in_(test_ids))
+        .order_by(TestAttempt.attempt_no)
+    )
+    for attempt in rows.scalars():
+        latest[attempt.test_id] = attempt
+    return latest
+
+
+class MyTestState(str, Enum):
+    NOT_STARTED = "new"  # 🟢 Ishlanmagan
+    IN_PROGRESS = "progress"  # 🟡 Jarayonda
+    COMPLETED = "done"  # 🔵 Tugatilgan
+    EXPIRED = "expired"  # 🔴 Muddati tugagan
+
+
+@dataclass
+class MyTest:
+    test: Test
+    attempt: TestAttempt | None
+    state: MyTestState
+    can_start: bool  # ▶️ start / continue / retake is possible now
+
+
+async def my_tests(session: AsyncSession, user: User, now: datetime | None = None, limit: int = 15) -> list[MyTest]:
+    """ "📚 Testlarim": running tests given to the employee plus the ones they already took."""
+    now = now or utcnow()
+    running = list(
         (
             await session.execute(
-                select(TestAttempt)
-                .where(TestAttempt.user_id == user.id, TestAttempt.test_id.in_([t.id for t in tests]))
-                .order_by(TestAttempt.attempt_no)
+                select(Test).where(Test.status == TestStatus.ACTIVE, Test.starts_at <= now, Test.deadline_at > now)
             )
         )
         .scalars()
         .all()
     )
-    latest: dict[int, TestAttempt] = {}
-    for attempt in attempts:
-        latest[attempt.test_id] = attempt
-    return [(t, latest.get(t.id)) for t in tests]
+    running = await _visible(session, running, user)
+    taken_ids = list(
+        (
+            await session.execute(
+                select(TestAttempt.test_id)
+                .where(TestAttempt.user_id == user.id)
+                .group_by(TestAttempt.test_id)
+                .order_by(func.max(TestAttempt.started_at).desc())
+                .limit(limit)
+            )
+        ).scalars()
+    )
+    by_id = {x.id: x for x in running}
+    missing = [i for i in taken_ids if i not in by_id]
+    if missing:
+        for test in (await session.execute(select(Test).where(Test.id.in_(missing)))).scalars():
+            by_id[test.id] = test
+    latest = await _latest_attempts(session, user.id, list(by_id))
+    retakes = set(
+        (
+            await session.execute(
+                select(TestAssignment.test_id).where(
+                    TestAssignment.user_id == user.id,
+                    TestAssignment.retake_allowed.is_(True),
+                    TestAssignment.status == AssignmentStatus.ASSIGNED,
+                )
+            )
+        ).scalars()
+    )
+    items: list[MyTest] = []
+    for test in by_id.values():
+        attempt = latest.get(test.id)
+        open_now = test.id in {x.id for x in running} and not test.paused
+        if attempt is None:
+            state = MyTestState.NOT_STARTED if open_now else MyTestState.EXPIRED
+            can_start = open_now
+        elif attempt.status == AttemptStatus.IN_PROGRESS and now < attempt.deadline_at:
+            state, can_start = MyTestState.IN_PROGRESS, open_now
+        elif attempt.status == AttemptStatus.COMPLETED:
+            state, can_start = MyTestState.COMPLETED, open_now and test.id in retakes
+        else:
+            state, can_start = MyTestState.EXPIRED, open_now and test.id in retakes
+        items.append(MyTest(test, attempt, state, can_start))
+    order = {MyTestState.IN_PROGRESS: 0, MyTestState.NOT_STARTED: 1, MyTestState.COMPLETED: 2, MyTestState.EXPIRED: 3}
+    items.sort(key=lambda m: (order[m.state], -(m.test.id)))
+    return items[:limit]
+
+
+async def add_time(session: AsyncSession, attempt_id: int, seconds: int, now: datetime | None = None) -> TestAttempt:
+    """Give an employee extra time. An attempt that already ran out of time (with unanswered
+    questions) is reopened from the first unanswered question."""
+    now = now or utcnow()
+    attempt = (
+        await session.execute(select(TestAttempt).where(TestAttempt.id == attempt_id).with_for_update(of=TestAttempt))
+    ).scalar_one_or_none()
+    if attempt is None:
+        raise ValueError("not_found")
+    test = await session.get(Test, attempt.test_id)
+    assert test is not None
+    if test.status != TestStatus.ACTIVE:
+        await session.commit()
+        raise ValueError("test_not_active")
+    if attempt.status == AttemptStatus.IN_PROGRESS:
+        attempt.deadline_at = max(attempt.deadline_at, now) + timedelta(seconds=seconds)
+    elif attempt.status == AttemptStatus.EXPIRED and attempt.answered_count < attempt.total_questions:
+        attempt.status = AttemptStatus.IN_PROGRESS
+        attempt.deadline_at = now + timedelta(seconds=seconds)
+        attempt.completed_at = None
+        attempt.passed = None
+        attempt.duration_seconds = None
+    else:
+        await session.commit()
+        raise ValueError("attempt_finished")
+    if test.deadline_at < attempt.deadline_at:
+        test.deadline_at = attempt.deadline_at  # keep the test open while this employee still works
+    try:
+        await session.commit()
+    except IntegrityError as exc:  # a newer attempt is already running
+        await session.rollback()
+        raise ValueError("other_attempt_running") from exc
+    logger.info("Extra time given", extra={"attempt_id": attempt_id, "seconds": seconds})
+    return attempt
 
 
 async def user_attempt_history(session: AsyncSession, user_id: int, limit: int = 10) -> list[TestAttempt]:

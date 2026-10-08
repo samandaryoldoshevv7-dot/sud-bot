@@ -1,8 +1,12 @@
-"""Tests that run INSIDE a Telegram group.
+"""Tests started from a Telegram group.
 
-Design (chosen for reliability and exact per-user accounting):
-* The bot posts a header message with ▶️ TESTNI BOSHLASH and then one shared message per question.
-  Each question message shows the full option texts and only ``A`` ``B`` ``C`` ``D`` buttons.
+Design (chosen for privacy and exact per-user accounting):
+* The bot posts ONE header message ("📚 YANGI TEST", questions, time) with ▶️ TESTNI BOSHLASH.
+  Pressing it identifies the employee by ``callback.from_user.id``, creates THEIR OWN attempt (their
+  personal timer starts) and opens the bot's private chat, where the questions are answered — so
+  other group members never see anybody's answers.
+* Legacy posts created before this design also have one shared message per question with ``A``
+  ``B`` ``C`` ``D`` buttons; those keep working until the test ends.
 * Native Telegram polls are NOT used: they cannot enforce "first answer is final", hide the correct
   answer per user, or be tied to our attempts. Custom inline keyboards are handled server-side.
 * The answering user is ALWAYS ``callback.from_user`` (callback data only carries the message id and
@@ -125,26 +129,25 @@ def render_question_final(tq: TestQuestion, gqm: GroupQuestionMessage, total: in
         mark = ("✅" if original == tq.correct_option else "▫️") if reveal else "▫️"
         lines.append(f"{mark} <b>{LETTERS[i]})</b> {esc(tq.options[original])}")
     if reveal and tq.explanation:
-        lines += ["", t("card.why"), esc(tq.explanation)]
+        lines += ["", t("quiz.explanation", text=esc(tq.explanation))]
     if not reveal:
         lines += ["", t("gt.final_hidden")]
     return "\n".join(lines)
 
 
-def render_header(test: Test, started: int | None = None, finished: bool = False) -> str:
-    hours = max(1, round((test.deadline_at - test.starts_at).total_seconds() / 3600))
-    key = "gt.header_finished" if finished else "gt.header"
+def render_header(
+    test: Test, started: int | None = None, finished: bool = False, sources: list[str] | None = None
+) -> str:
+    if finished:
+        return t("gt.header_finished", title=esc(test.title), n=test.question_count, end=fmt_dt(utcnow()))
     text = t(
-        key,
-        title=esc(test.title),
-        n=test.question_count,
-        duration=fmt_hours(hours),
-        start=fmt_dt(test.starts_at),
-        end=fmt_dt(test.deadline_at),
-        passing=test.passing_percent,
+        "gt.header", title=esc(test.title), n=test.question_count, duration=fmt_hours(test.duration_seconds / 3600)
     )
-    if test.description and not finished:
+    if sources:
+        text += "\n" + t("announce.sources", s=esc(" + ".join(sources)))
+    if test.description:
         text += "\n\n" + esc(truncate(test.description, 500))
+    text += "\n\n" + t("gt.header_hint")
     if started is not None:
         text += "\n\n" + t("gt.participants", n=started)
     return text
@@ -177,9 +180,10 @@ async def _call(coro_factory, *, what: str):
 
 
 async def ensure_post(
-    session: AsyncSession, test: Test, group: Group, rng: random.Random | None = None
+    session: AsyncSession, test: Test, group: Group, rng: random.Random | None = None, with_questions: bool = False
 ) -> GroupTestPost:
-    """Create (once) the post and its question-message rows with the option order for the group."""
+    """Create (once) the group post. ``with_questions`` additionally creates shared in-group question
+    messages (legacy mode; new posts only carry the ▶️ TESTNI BOSHLASH header)."""
     existing = (
         await session.execute(
             select(GroupTestPost).where(GroupTestPost.test_id == test.id, GroupTestPost.group_id == group.id)
@@ -197,6 +201,8 @@ async def ensure_post(
         .scalars()
         .all()
     )
+    if not with_questions:
+        questions = []
     if test.randomize_questions:
         rng.shuffle(questions)
     post = GroupTestPost(test_id=test.id, group_id=group.id, chat_id=group.chat_id)
@@ -233,8 +239,11 @@ async def send_post(bot: Bot, session_maker: async_sessionmaker[AsyncSession], p
             assert test is not None
             if post.header_message_id is None:
                 try:
+                    from app.services.test_builder import source_names
+
+                    header = render_header(test, sources=await source_names(session, test.id))
                     msg = await _call(
-                        lambda: bot.send_message(post.chat_id, render_header(test), reply_markup=header_keyboard(post)),
+                        lambda: bot.send_message(post.chat_id, header, reply_markup=header_keyboard(post)),
                         what="header",
                     )
                 except TelegramForbiddenError:
@@ -320,6 +329,12 @@ async def post_to_group_and_report(
     return ok
 
 
+async def post_has_questions(session: AsyncSession, post_id: int) -> bool:
+    """Legacy posts carry shared question messages; new posts are only the START header."""
+    stmt = select(func.count(GroupQuestionMessage.id)).where(GroupQuestionMessage.post_id == post_id)
+    return bool((await session.execute(stmt)).scalar_one())
+
+
 async def posted_group_ids(session: AsyncSession, test_id: int) -> set[int]:
     rows = await session.execute(select(GroupTestPost.group_id).where(GroupTestPost.test_id == test_id))
     return set(rows.scalars().all())
@@ -333,10 +348,12 @@ async def _authorise(
 ) -> tuple[User | None, GroupAnswerCode | None]:
     user = await upsert_user(session, tg_user)
     await group_service.mark_membership(session, group, user, True)
-    if user.status == UserStatus.INACTIVE:
+    if user.status in (UserStatus.INACTIVE, UserStatus.BLOCKED):
         return user, GroupAnswerCode.BLOCKED
     if user.status == UserStatus.PENDING:
-        if await settings_service.get_value(session, "auto_approve_group_members"):
+        if await settings_service.get_value(session, "auto_approve_all") or await settings_service.get_value(
+            session, "auto_approve_group_members"
+        ):
             user.status = UserStatus.ACTIVE
             await session.commit()
         else:
@@ -369,8 +386,10 @@ async def _get_or_start_attempt(
     attempt = await get_in_progress(session, test.id, user.id)
     if attempt is not None:
         return attempt
-    result = await start_attempt(session, user, test.id, chat_id=post.chat_id, now=now,
-                                 layout=await _layout(session, post.id))  # fmt: skip
+    # Legacy posts with shared question messages: the attempt uses the group's letters; header-only
+    # posts: the attempt gets its own (shuffled) layout like any private test.
+    layout = await _layout(session, post.id) or None
+    result = await start_attempt(session, user, test.id, chat_id=None, now=now, layout=layout)
     return result.attempt
 
 
@@ -433,9 +452,12 @@ async def submit_group_answer(
     async def duplicate() -> GroupAnswerResult:
         previous = (
             await session.execute(
-                select(UserAnswer.selected_display).where(
+                select(UserAnswer.selected_display)
+                .where(
                     UserAnswer.user_id == user_id, UserAnswer.test_id == test_id, UserAnswer.test_question_id == tq_id
                 )
+                .order_by(UserAnswer.id.desc())
+                .limit(1)
             )
         ).scalar_one_or_none()
         return GroupAnswerResult(GroupAnswerCode.DUPLICATE, selected=previous)
@@ -453,9 +475,7 @@ async def submit_group_answer(
         return await duplicate()
     exists = (
         await session.execute(
-            select(UserAnswer.id).where(
-                UserAnswer.user_id == user_id, UserAnswer.test_id == test_id, UserAnswer.test_question_id == tq_id
-            )
+            select(UserAnswer.id).where(UserAnswer.attempt_id == attempt_id, UserAnswer.test_question_id == tq_id)
         )
     ).scalar_one_or_none()
     if exists is not None:
@@ -675,7 +695,9 @@ async def active_group_tests(session: AsyncSession, chat_id: int) -> list[Test]:
     now = utcnow()
     group_id = (await session.execute(select(Group.id).where(Group.chat_id == chat_id))).scalar_one_or_none()
     posted = select(GroupTestPost.test_id).where(GroupTestPost.chat_id == chat_id)
-    audience = Test.id.in_(posted) | Test.group_id.is_(None)
+    from app.models import TestAudience
+
+    audience = Test.id.in_(posted) | (Test.group_id.is_(None) & (Test.audience != TestAudience.USERS))
     if group_id is not None:
         audience = audience | (Test.group_id == group_id)
     stmt = (

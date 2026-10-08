@@ -18,12 +18,9 @@ from app.locales import t
 from app.models import (
     AttemptStatus,
     Group,
-    GroupMember,
     Test,
     TestAttempt,
     User,
-    UserRole,
-    UserStatus,
 )
 from app.utils.text import esc
 from app.utils.time import fmt_dt, fmt_hours
@@ -101,24 +98,20 @@ async def notify_admins(bot: Bot, text: str, reply_markup: InlineKeyboardMarkup 
 
 
 async def test_audience_users(session: AsyncSession, test: Test) -> list[User]:
-    stmt = select(User).where(User.role == UserRole.EMPLOYEE, User.status == UserStatus.ACTIVE)
-    if test.group_id is not None:
-        stmt = stmt.join(GroupMember, GroupMember.user_id == User.id).where(
-            GroupMember.group_id == test.group_id, GroupMember.is_member.is_(True)
-        )
-    return list((await session.execute(stmt)).scalars().all())
+    from app.services.assignments import audience_users
+
+    return await audience_users(session, test)
 
 
-async def test_card_text(test: Test) -> str:
-    hours = max(1, round((test.deadline_at - test.starts_at).total_seconds() / 3600))
+async def test_card_text(test: Test, sources: list[str] | None = None) -> str:
     text = t(
         "announce.body",
         title=esc(test.title),
         questions=test.question_count,
-        duration=fmt_hours(hours),
-        deadline=fmt_dt(test.deadline_at),
-        passing=test.passing_percent,
+        duration=fmt_hours(test.duration_seconds / 3600),
     )
+    if sources:
+        text += "\n" + t("announce.sources", s=esc(" + ".join(sources)))
     if test.description:
         text += "\n\n" + esc(test.description)
     return text
@@ -127,12 +120,15 @@ async def test_card_text(test: Test) -> str:
 async def announce_test(bot: Bot, session: AsyncSession, test: Test, *, groups_only: bool = False) -> dict:
     """Post the announcement (with deep-link START button) to groups and DM the audience."""
     from app.services import settings_service
+    from app.services.test_builder import source_names
 
     link = await deep_link(bot, f"test_{test.id}")
-    body = await test_card_text(test)
+    body = await test_card_text(test, await source_names(session, test.id))
     stats = {"groups": 0, "dm": 0, "dm_failed": 0}
 
-    if await settings_service.get_value(session, "announce_in_groups"):
+    from app.models import TestAudience
+
+    if test.audience != TestAudience.USERS and await settings_service.get_value(session, "announce_in_groups"):
         group_stmt = select(Group).where(Group.is_active.is_(True))
         if test.group_id is not None:
             group_stmt = group_stmt.where(Group.id == test.group_id)

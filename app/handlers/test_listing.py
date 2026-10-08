@@ -15,8 +15,8 @@ from app.locales import t
 from app.models import AttemptStatus, Group, GroupMember, GroupTestPost, Test, TestStatus, User
 from app.services import attempts as attempt_service
 from app.services import groups as group_service
-from app.utils.text import esc, truncate
-from app.utils.time import fmt_dt, utcnow
+from app.utils.text import esc, pct, truncate
+from app.utils.time import fmt_hours, fmt_span, utcnow
 
 logger = logging.getLogger(__name__)
 
@@ -64,22 +64,45 @@ async def refresh_test_memberships(bot: Bot, session: AsyncSession, user: User) 
             await group_service.mark_membership(session, group, user, True)
 
 
+STATE_KEY = {
+    attempt_service.MyTestState.NOT_STARTED: "emp.state.new",
+    attempt_service.MyTestState.IN_PROGRESS: "emp.state.progress",
+    attempt_service.MyTestState.COMPLETED: "emp.state.done",
+    attempt_service.MyTestState.EXPIRED: "emp.state.expired",
+}
+
+
 async def available_tests_view(bot: Bot, session: AsyncSession, user: User) -> tuple[str, InlineKeyboardMarkup] | None:
+    """📚 TESTLARIM: every test given to the employee with its state and one button each."""
     await refresh_test_memberships(bot, session, user)
-    items = await attempt_service.available_tests_for_user(session, user)
+    items = await attempt_service.my_tests(session, user)
     if not items:
         return None
+    now = utcnow()
+    lines = [t("emp.my_tests.title")]
     rows = []
-    lines = [t("emp.my_tests.title"), ""]
-    for test, attempt in items:
-        if attempt is None:
-            mark = "🆕"
-        elif attempt.status == AttemptStatus.IN_PROGRESS:
-            mark = "⏳"
-        elif attempt.status == AttemptStatus.COMPLETED:
-            mark = "✅"
-        else:
-            mark = "⌛"
-        lines.append(f"{mark} <b>{esc(test.title)}</b> — {t('emp.my_tests.deadline', d=fmt_dt(test.deadline_at))}")
-        rows.append([(f"{mark} {truncate(test.title, 40)}", EmpCB(a="card", id=test.id))])
+    for item in items:
+        test, attempt = item.test, item.attempt
+        state = t(STATE_KEY[item.state])
+        lines += [
+            "",
+            f"{state.split()[0]} <b>{esc(test.title)}</b>",
+            t("emp.card.questions", n=test.question_count),
+            t("emp.card.duration", d=fmt_hours(test.duration_seconds / 3600)),
+            state.split(maxsplit=1)[1],
+        ]
+        if item.state == attempt_service.MyTestState.IN_PROGRESS and attempt is not None:
+            lines.append(t("emp.card.progress", done=attempt.answered_count, total=attempt.total_questions))
+            lines.append(t("emp.card.left", d=fmt_span((attempt.deadline_at - now).total_seconds())))
+        elif attempt is not None and attempt.status != AttemptStatus.IN_PROGRESS:
+            lines.append(t("emp.card.score", score=pct(attempt.score_percent)))
+        title = truncate(test.title, 38)
+        if item.can_start and item.state == attempt_service.MyTestState.NOT_STARTED:
+            rows.append([(t("emp.list.btn.start", title=title), EmpCB(a="start", id=test.id))])
+        elif item.can_start and item.state == attempt_service.MyTestState.IN_PROGRESS:
+            rows.append([(t("emp.list.btn.continue", title=title), EmpCB(a="start", id=test.id))])
+        elif item.can_start:
+            rows.append([(t("emp.list.btn.retake", title=title), EmpCB(a="card", id=test.id))])
+        elif attempt is not None and attempt.status != AttemptStatus.IN_PROGRESS:
+            rows.append([(t("emp.list.btn.result", title=title), EmpCB(a="res", id=attempt.id))])
     return "\n".join(lines), kb(*rows)

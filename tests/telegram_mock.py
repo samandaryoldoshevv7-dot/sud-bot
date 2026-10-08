@@ -14,12 +14,13 @@ from aiogram.methods import (
     EditMessageReplyMarkup,
     EditMessageText,
     GetChatMember,
+    GetFile,
     GetMe,
     SendDocument,
     SendMessage,
     TelegramMethod,
 )
-from aiogram.types import Chat, ChatMemberLeft, ChatMemberMember, Message, Update, User
+from aiogram.types import Chat, ChatMemberLeft, ChatMemberMember, Document, File, Message, Update, User
 
 _ids = itertools.count(1000)
 
@@ -31,6 +32,7 @@ class RecordingSession(BaseSession):
         self.member_ids: set[int] = set()  # users getChatMember reports as members of ANY group
         self.members_by_chat: dict[int, set[int]] = {}  # per-group membership (checked first)
         self.forbidden_chats: set[int] = set()  # chats where the bot may not write
+        self.files: dict[str, bytes] = {}  # file_id -> content served to bot.download()
 
     async def make_request(self, bot: Bot, method: TelegramMethod, timeout: int | None = None) -> Any:
         self.requests.append(method)
@@ -59,6 +61,8 @@ class RecordingSession(BaseSession):
                 chat=Chat(id=int(method.chat_id or 1), type="private"),
                 text=method.text,
             )
+        if isinstance(method, GetFile):
+            return File(file_id=method.file_id, file_unique_id=f"u{method.file_id}", file_path=f"docs/{method.file_id}")
         if isinstance(method, GetChatMember):
             member_user = User(id=int(method.user_id), is_bot=False, first_name="x")
             chat_members = self.members_by_chat.get(int(method.chat_id))
@@ -76,8 +80,8 @@ class RecordingSession(BaseSession):
     async def close(self) -> None:
         return None
 
-    async def stream_content(self, *args, **kwargs):  # pragma: no cover
-        raise NotImplementedError
+    async def stream_content(self, url: str, *args, **kwargs):
+        yield self.files[url.rsplit("/", 1)[-1]]
 
     def texts(self) -> list[str]:
         return [m.text for m in self.requests if isinstance(m, (SendMessage, EditMessageText))]
@@ -128,5 +132,21 @@ def callback_update(user_id: int, data: str, first_name: str = "Ali", chat_id: i
         update_id=next(_update_ids),
         callback_query=CallbackQuery(
             id=str(next(_ids)), from_user=user, chat_instance="ci", message=message, data=data
+        ),
+    )
+
+
+def document_update(user_id: int, file_id: str, file_name: str, size: int, mime: str = "text/plain") -> Update:
+    user = User(id=user_id, is_bot=False, first_name="Admin")
+    return Update(
+        update_id=next(_update_ids),
+        message=Message(
+            message_id=next(_ids),
+            date=datetime.now(UTC),
+            chat=Chat(id=user_id, type="private"),
+            from_user=user,
+            document=Document(
+                file_id=file_id, file_unique_id=f"u{file_id}", file_name=file_name, file_size=size, mime_type=mime
+            ),
         ),
     )

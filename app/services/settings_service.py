@@ -24,7 +24,7 @@ SPECS: dict[str, SettingSpec] = {
     s.key: s
     for s in [
         SettingSpec("auto_approve_group_members", True, "bool"),
-        SettingSpec("auto_approve_all", False, "bool"),
+        SettingSpec("auto_approve_all", True, "bool"),  # new employees are active right after /start
         SettingSpec("notify_employees_dm", True, "bool"),
         SettingSpec("announce_in_groups", True, "bool"),
         SettingSpec("ranking_min_attempts", 1, "int", 1, 50),

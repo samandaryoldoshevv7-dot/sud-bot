@@ -99,13 +99,13 @@ async def is_member_of_active_group(session: AsyncSession, user_id: int) -> bool
 
 @dataclass
 class UserFilter:
-    status: str = "all"  # all | active | pending | inactive
+    status: str = "all"  # all | active | pending | inactive | blocked
     query: str = ""
 
 
 def _filtered(stmt: Select, flt: UserFilter) -> Select:
     stmt = stmt.where(User.role == UserRole.EMPLOYEE)
-    if flt.status in ("active", "pending", "inactive"):
+    if flt.status in ("active", "pending", "inactive", "blocked"):
         stmt = stmt.where(User.status == UserStatus(flt.status))
     else:  # removed employees live only in their own archive list
         stmt = stmt.where(User.status != UserStatus.INACTIVE)
@@ -141,7 +141,7 @@ async def employee_counts(session: AsyncSession) -> dict[str, int]:
     counts = {s.value: 0 for s in UserStatus}
     for status, n in rows:
         counts[status.value] = n
-    counts["total"] = counts["active"] + counts["pending"]  # removed employees are not counted
+    counts["total"] = counts["active"] + counts["pending"] + counts["blocked"]  # removed ones are not counted
     return counts
 
 

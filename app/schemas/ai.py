@@ -24,6 +24,10 @@ class GeneratedQuestion(_Strict):
     source_chunk_id: int
     source_reference: str = Field(default="", max_length=500)
     source_excerpt: str = Field(min_length=15, max_length=2000)
+    # Mandatory in the prompt; checked against the chunk's real document by the backend. An empty or
+    # wrong value rejects only this question (not the whole batch).
+    source: str = Field(default="", max_length=255)
+    source_file: str = Field(default="", max_length=255)
 
     @field_validator("correct_answer", mode="before")
     @classmethod
