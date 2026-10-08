@@ -522,7 +522,7 @@ async def build_and_send(
         reason = esc(_friendly_error(report.error or "not_enough_questions"))
         text = t("ct.partial", created=report.created, requested=report.requested, per_source=per_source or "—",
                  reason=reason)  # fmt: skip
-        rows = []
+        rows = [[(t("ct.btn.resume"), AdminCB(s="ct_resume", id=test_id))]]
         if report.created:
             rows.append([(t("ct.btn.send_partial", n=report.created), AdminCB(s="ct_part", id=test_id))])
             rows.append([(t("tests.btn.preview_short"), AdminCB(s="tst_rv", id=test_id, p=1))])
@@ -560,3 +560,61 @@ async def cb_send_partial(
     from app.handlers.admin.tests import render_test
 
     await render_test(callback, session, callback_data.id)
+
+
+async def is_mixed_draft(session: AsyncSession, test_id: int) -> bool:
+    """A draft made with ➕ Test yaratish (sources, but no wizard material list)."""
+    from sqlalchemy import func
+
+    from app.models import TestMaterial
+
+    if not await tb.source_names(session, test_id):
+        return False
+    wizard = (
+        await session.execute(select(func.count(TestMaterial.id)).where(TestMaterial.test_id == test_id))
+    ).scalar_one()
+    return wizard == 0
+
+
+@router.callback_query(AdminCB.filter(F.s == "ct_resume"))
+async def cb_resume(
+    callback: CallbackQuery, callback_data: AdminCB, session: AsyncSession, session_maker, bot: Bot
+) -> None:
+    """🔄 Davom ettirish: build the mixed test again; questions made before are reused from the bank."""
+    from app.models import GenerationStatus
+
+    test = await _draft(callback, session, callback_data.id)
+    if test is None:
+        return
+    if test.generation_status == GenerationStatus.RUNNING:
+        await callback.answer(t("tests.assembly_busy"), show_alert=True)
+        return
+    await callback.answer()
+    assert isinstance(callback.message, Message)
+    status = await callback.message.answer(t("ct.resuming", n=test.question_count))
+    background.spawn(
+        build_and_send(session_maker, bot, test.id, status.chat.id, status.message_id), name=f"mixed-test-{test.id}"
+    )
+
+
+async def notify_interrupted_tests(
+    bot: Bot, session_maker: async_sessionmaker[AsyncSession], test_ids: list[int]
+) -> None:
+    """After a restart: tell the admins which test builds stopped and offer to continue."""
+    from app.services.notifications import notify_admins
+
+    for test_id in test_ids:
+        async with session_maker() as session:
+            test = await session.get(Test, test_id)
+            if test is None or test.status != TestStatus.DRAFT:
+                continue
+            title = test.title
+            action = "ct_resume" if await is_mixed_draft(session, test_id) else "tst_gen"
+        await notify_admins(
+            bot,
+            t("ct.interrupted", title=esc(title)),
+            kb(
+                [(t("ct.btn.resume"), AdminCB(s=action, id=test_id))],
+                [(t("tests.btn.open"), AdminCB(s="tst_v", id=test_id))],
+            ),
+        )

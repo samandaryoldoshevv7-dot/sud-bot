@@ -305,6 +305,11 @@ async def cb_fill(
     if test.generation_status == GenerationStatus.RUNNING:
         await callback.answer(t("tests.assembly_busy"), show_alert=True)
         return
+    from app.handlers.admin.create_test import cb_resume, is_mixed_draft
+
+    if await is_mixed_draft(session, test.id):  # made with ➕ Test yaratish: continue the mixed build
+        await cb_resume(callback, callback_data, session, session_maker, bot)
+        return
     await callback.answer()
     await start_assembly(callback, session_maker, bot, test.id)
 

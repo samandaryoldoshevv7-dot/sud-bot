@@ -75,7 +75,7 @@ async def set_commands(bot: Bot, settings: Settings) -> None:
             logger.info("Could not set admin commands", extra={"admin_id": admin_id, "error": str(exc)[:100]})
 
 
-async def startup_checks(settings: Settings) -> None:
+async def startup_checks(settings: Settings) -> list[int]:
     session_maker = get_session_maker()
     async with session_maker() as session:
         await session.execute(text("SELECT 1"))
@@ -84,7 +84,7 @@ async def startup_checks(settings: Settings) -> None:
         stuck = await reset_stuck_generation(session)
     logger.info(
         "Database ready",
-        extra={"vector_backend": backend, "reset_generation_jobs": stuck},
+        extra={"vector_backend": backend, "reset_generation_jobs": len(stuck)},
     )
     if backend == "none":
         logger.error("source_chunks.embedding column missing - run `alembic upgrade head`")
@@ -96,6 +96,7 @@ async def startup_checks(settings: Settings) -> None:
     if isinstance(provider, FastEmbedProvider):
         ok = await provider.warmup()
         logger.info("Embeddings", extra={"provider": provider.name, "model": provider.model_name, "available": ok})
+    return stuck
 
 
 def build_web_app(bot: Bot, dp: Dispatcher, settings: Settings) -> web.Application:
@@ -124,12 +125,16 @@ async def run() -> None:
     setup_logging(settings.log_level, settings.log_format, settings.secret_values())
     logger.info("Starting court training bot", extra={"version": __version__, "mode": settings.bot_mode})
 
-    await startup_checks(settings)
+    interrupted_tests = await startup_checks(settings)
     bot = create_bot(settings)
     dp = create_dispatcher()
     me = await bot.get_me()
     logger.info("Bot authorised", extra={"username": me.username, "bot_id": me.id})
     await set_commands(bot, settings)
+    if interrupted_tests:  # test building cut off by the restart: tell the admins how to continue
+        from app.handlers.admin.create_test import notify_interrupted_tests
+
+        background.spawn(notify_interrupted_tests(bot, get_session_maker(), interrupted_tests), name="notify-tests")
 
     web_app = build_web_app(bot, dp, settings)
     runner = web.AppRunner(web_app, access_log=None)

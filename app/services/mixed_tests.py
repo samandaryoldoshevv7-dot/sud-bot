@@ -206,14 +206,15 @@ async def _build(
     )
     picked: dict[int, list[Question]] = {s.id: [] for s in ready}
     generator: QuestionGenerator | None = None
+    ai_blocked = False  # after a rate limit, further AI calls would only wait: use the bank only
 
     async def take(source: TestSource, count: int) -> int:
         """Up to ``count`` more questions of this one file: bank first, then generation."""
-        nonlocal generator
+        nonlocal generator, ai_blocked
         if count <= 0:
             return 0
         got = await select_bank_questions(session, test, SourceKind.MATERIAL, count, [source.material_id], used, rng)
-        if len(got) < count and generator_factory is not None:
+        if len(got) < count and generator_factory is not None and not ai_blocked:
             try:
                 generator = generator or generator_factory()
             except AIError as exc:
@@ -232,6 +233,9 @@ async def _build(
                     report.rejected[key] = report.rejected.get(key, 0) + value
                 if result.error and not result.questions:
                     report.error = report.error or result.error
+                if result.error and "rate limit" in result.error.lower():
+                    ai_blocked = True
+                    report.error = result.error
                 got += [q for q in result.questions if q.source_material_id == source.material_id]
         elif len(got) < count and generator_factory is None:
             report.error = report.error or "ai_not_configured"
