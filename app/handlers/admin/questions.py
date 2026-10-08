@@ -315,13 +315,13 @@ async def cb_edit_field(
         await callback.answer(t("common.not_found"), show_alert=True)
         return
     if callback_data.v == "correct":
-        rows = [[(letter, AdminCB(s="qb_set", id=q.id, v=f"correct:{letter}")) for letter in q.options]]
+        rows = [[(letter, AdminCB(s="qb_set", id=q.id, v=f"correct-{letter}")) for letter in q.options]]
         await show(callback, t("qb.choose_correct"), kb(*rows, back_menu_row("qb_ed", id_=q.id)))
         return
     if callback_data.v == "difficulty":
         rows = [
             [
-                (t(f"difficulty.{d}"), AdminCB(s="qb_set", id=q.id, v=f"difficulty:{d}"))
+                (t(f"difficulty.{d}"), AdminCB(s="qb_set", id=q.id, v=f"difficulty-{d}"))
                 for d in ("easy", "medium", "hard")
             ]
         ]
@@ -359,7 +359,7 @@ async def on_edit(message: Message, state: FSMContext, session: AsyncSession, us
 
 @router.callback_query(AdminCB.filter(F.s == "qb_set"))
 async def cb_set_value(callback: CallbackQuery, callback_data: AdminCB, session: AsyncSession, user: User) -> None:
-    field, _, value = callback_data.v.partition(":")
+    field, _, value = callback_data.v.partition("-")
     await callback.answer()
     await _apply_edit(callback, session, callback_data.id, field, value, user)
 
