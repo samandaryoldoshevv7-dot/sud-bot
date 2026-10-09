@@ -218,8 +218,8 @@ async def test_group_messages_and_callbacks_end_to_end(tg, session_maker):
     assert tg.session.sent_to(GROUP_CHAT) == []
 
     gqm_id = msgs[0].id
-    await tg(callback_update(8001, GroupStartCB(p=post_id).pack(), "Aliyev", chat_id=GROUP_CHAT))
-    assert any("Test boshlandi" in a for a in tg.session.alerts())
+    await tg(callback_update(8001, GroupStartCB(p=post_id, m="g").pack(), "Aliyev", chat_id=GROUP_CHAT))
+    assert any("Savollar shu guruhda" in a for a in tg.session.alerts())
     tg.session.clear()
     await tg(callback_update(8001, GroupAnsCB(m=gqm_id, o="B").pack(), "Aliyev", chat_id=GROUP_CHAT))
     assert any("qabul qilindi" in a for a in tg.session.alerts())
@@ -301,7 +301,9 @@ async def test_scheduler_starts_group_test_automatically(tg, session_maker):
         await session.commit()
     await run_tick(tg.bot, session_maker)
     sent = tg.session.sent_to(GROUP_CHAT)
-    assert len(sent) == 1 and "YANGI TEST" in sent[0].text and "TESTNI BOSHLASH" in sent[0].text
+    assert len(sent) == 1 and "YANGI TEST" in sent[0].text and "1. Botda ishlash" in sent[0].text
+    buttons = [b.text for row in sent[0].reply_markup.inline_keyboard for b in row]
+    assert buttons == ["🤖 1. Botda ishlash", "👥 2. Guruhda ishlash"]
     await run_tick(tg.bot, session_maker)  # idempotent: nothing posted twice
     assert len(tg.session.sent_to(GROUP_CHAT)) == 1
 
@@ -366,7 +368,7 @@ async def test_group_test_can_be_continued_in_private_chat(tg, session_maker):
     assert any("allaqachon" in a for a in tg.session.alerts())
     await tg(callback_update(9201, AnsCB(at=attempt_id, pos=1, o="B").pack(), "Shaxsiy"))
     await tg(callback_update(9201, AnsCB(at=attempt_id, pos=2, o="C").pack(), "Shaxsiy"))
-    await tg(callback_update(9201, EmpCB(a="next", id=attempt_id).pack(), "Shaxsiy"))  # ✖️ CHIQISH
+    await tg(callback_update(9201, EmpCB(a="next", id=attempt_id).pack(), "Shaxsiy"))  # ➡️ Keyingi savol
     assert any("TEST YAKUNLANDI" in t for t in tg.session.texts())
     async with session_maker() as session:
         answers = (

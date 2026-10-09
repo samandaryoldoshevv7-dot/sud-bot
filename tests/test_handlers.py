@@ -166,9 +166,9 @@ async def test_employee_takes_test_via_buttons(tg, session_maker):
         await tg(callback_update(4000, AnsCB(at=attempt.id, pos=pos, o=letter).pack()))
         result = next(t for t in s.texts() if "Sizning javobingiz:" in t)
         assert "JAVOB QABUL QILINDI" in result and "Barakalla" not in result  # reveal mode "after"
-        assert [b.text for row in s.last_markup().inline_keyboard for b in row] == ["✖️ CHIQISH"]
+        assert [b.text for row in s.last_markup().inline_keyboard for b in row] == ["➡️ Keyingi savol"]
         s.clear()
-        await tg(callback_update(4000, EmpCB(a="next", id=attempt.id).pack()))  # ✖️ CHIQISH
+        await tg(callback_update(4000, EmpCB(a="next", id=attempt.id).pack()))  # ➡️ Keyingi savol
     assert any("TEST YAKUNLANDI" in t for t in s.texts())
     assert any("✅ To'g'ri: 2" in t and "100%" in t for t in s.texts())
     # Pressing an old answer button again is harmless.

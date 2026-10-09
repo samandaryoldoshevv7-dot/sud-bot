@@ -1,5 +1,5 @@
 """Scenarios of the second improvement round: auto activation, 📚 Testlarim, personal 24h timer,
-quiz-style answering with ✖️ CHIQISH, mixed tests from several files with sources, distribution,
+quiz-style answering with ➡️ Keyingi savol, mixed tests from several files with sources, distribution,
 retakes, group start opening a private session, and many employees at once."""
 
 import asyncio
@@ -146,13 +146,13 @@ async def test_user_flow_start_timer_answer_close_next_result(tg, session_maker)
         else:
             assert "✅ <b>TO'G'RI JAVOB</b>" in card and f"Sizning javobingiz:\n{letter})" in card
         assert not re.search(r"barakalla|ajoyib|zo'r|super|tabrik|👏", card, re.I)
-        assert [b.text for row in tg.session.last_markup().inline_keyboard for b in row] == ["✖️ CHIQISH"]
+        assert [b.text for row in tg.session.last_markup().inline_keyboard for b in row] == ["➡️ Keyingi savol"]
         # The same question cannot be answered again (B after A).
         other = next(x for x in "ABCD" if x != letter)
         tg.session.clear()
         await tg(callback_update(7001, AnsCB(at=attempt_id, pos=pos, o=other).pack(), "Ali"))
         assert any("allaqachon" in a for a in tg.session.alerts())
-        # ✖️ CHIQISH closes the answer window only: the next question comes, the attempt goes on.
+        # ➡️ Keyingi savol closes the answer window only: the next question comes, the attempt goes on.
         tg.session.clear()
         await tg(callback_update(7001, EmpCB(a="next", id=attempt_id).pack(), "Ali"))
         if pos < 3:

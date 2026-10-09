@@ -154,7 +154,10 @@ def render_header(
 
 
 def header_keyboard(post: GroupTestPost) -> InlineKeyboardMarkup:
-    return kb([(t("btn.start_test_caps"), GroupStartCB(p=post.id))])
+    return kb(
+        [(t("gt.btn.in_bot"), GroupStartCB(p=post.id, m="b"))],
+        [(t("gt.btn.in_group"), GroupStartCB(p=post.id, m="g"))],
+    )
 
 
 # ------------------------------------------------------------------------------ Telegram helpers
@@ -203,16 +206,10 @@ async def ensure_post(
     )
     if not with_questions:
         questions = []
-    if test.randomize_questions:
-        rng.shuffle(questions)
     post = GroupTestPost(test_id=test.id, group_id=group.id, chat_id=group.chat_id)
     session.add(post)
     await session.flush()
-    for position, tq in enumerate(questions):
-        opts = list(tq.options.keys())
-        if test.randomize_options:
-            rng.shuffle(opts)  # one shuffle per group post: everybody sees the same shared message
-        session.add(GroupQuestionMessage(post_id=post.id, test_question_id=tq.id, position=position, opts=opts))
+    _add_question_rows(session, post, test, questions, rng)
     try:
         await session.commit()
     except IntegrityError:
@@ -223,6 +220,73 @@ async def ensure_post(
             )
         ).scalar_one()
     return post
+
+
+def _add_question_rows(
+    session: AsyncSession, post: GroupTestPost, test: Test, questions: list[TestQuestion], rng: random.Random
+) -> None:
+    questions = list(questions)
+    if test.randomize_questions:
+        rng.shuffle(questions)
+    for position, tq in enumerate(questions):
+        opts = list(tq.options.keys())
+        if test.randomize_options:
+            rng.shuffle(opts)  # one shuffle per group post: everybody sees the same shared message
+        session.add(GroupQuestionMessage(post_id=post.id, test_question_id=tq.id, position=position, opts=opts))
+
+
+async def open_in_group(session: AsyncSession, post_id: int) -> bool:
+    """👥 Guruhda ishlash: the questions are posted into the group once (shared by all members).
+    True when they still have to be sent."""
+    post = (
+        await session.execute(select(GroupTestPost).where(GroupTestPost.id == post_id).with_for_update())
+    ).scalar_one_or_none()
+    if post is None:
+        return False
+    if await post_has_questions(session, post_id):
+        await session.commit()
+        return not post.posted_all
+    test = await session.get(Test, post.test_id)
+    assert test is not None
+    questions = list(
+        (
+            await session.execute(
+                select(TestQuestion).where(TestQuestion.test_id == test.id).order_by(TestQuestion.position)
+            )
+        ).scalars()
+    )
+    _add_question_rows(session, post, test, questions, random.SystemRandom())
+    post.posted_all = False
+    await session.commit()
+    return True
+
+
+async def by_poll(session: AsyncSession, poll_id: str) -> GroupQuestionMessage | None:
+    return (
+        await session.execute(select(GroupQuestionMessage).where(GroupQuestionMessage.poll_id == poll_id))
+    ).scalar_one_or_none()
+
+
+async def _send_question(bot: Bot, session: AsyncSession, post: GroupTestPost, test: Test, tq: TestQuestion,
+                         gqm: GroupQuestionMessage, total: int):  # fmt: skip
+    """A native quiz poll (each member sees only their own result; nobody sees the others' votes
+    until the test ends) — or the classic text + buttons when the question does not fit a poll."""
+    from app.services import quiz_polls
+
+    if await settings_service.get_value(session, "quiz_polls"):
+        spec = quiz_polls.build_for(tq, list(gqm.opts), gqm.position, total, test.answer_reveal)
+        if spec is not None:
+            msg = await _call(
+                lambda: bot.send_poll(post.chat_id, **quiz_polls.send_kwargs(spec), hide_results_until_closes=True),
+                what="question-poll",
+            )
+            if msg is not None and msg.poll is not None:
+                gqm.poll_id = msg.poll.id
+                return msg
+    return await _call(
+        lambda: bot.send_message(post.chat_id, render_question(tq, gqm, total), reply_markup=answer_keyboard(gqm)),
+        what="question",
+    )
 
 
 async def send_post(bot: Bot, session_maker: async_sessionmaker[AsyncSession], post_id: int) -> bool:
@@ -271,12 +335,7 @@ async def send_post(bot: Bot, session_maker: async_sessionmaker[AsyncSession], p
                 tq = await session.get(TestQuestion, gqm.test_question_id)
                 assert tq is not None
                 try:
-                    msg = await _call(
-                        lambda tq=tq, gqm=gqm: bot.send_message(
-                            post.chat_id, render_question(tq, gqm, total), reply_markup=answer_keyboard(gqm)
-                        ),
-                        what="question",
-                    )
+                    msg = await _send_question(bot, session, post, test, tq, gqm, total)
                 except TelegramForbiddenError:
                     logger.error("Bot cannot write to the group", extra={"chat_id": post.chat_id})
                     return False
@@ -473,6 +532,10 @@ async def submit_group_answer(
     if attempt.status != AttemptStatus.IN_PROGRESS:
         await session.commit()
         return await duplicate()
+    if now >= attempt.deadline_at:  # the employee's personal time is over
+        await finalize_attempt(session, attempt, AttemptStatus.EXPIRED, now)
+        await session.commit()
+        return GroupAnswerResult(GroupAnswerCode.EXPIRED)
     exists = (
         await session.execute(
             select(UserAnswer.id).where(UserAnswer.attempt_id == attempt_id, UserAnswer.test_question_id == tq_id)
@@ -622,6 +685,9 @@ async def finalize_posts(bot: Bot, session_maker: async_sessionmaker[AsyncSessio
             )  # fmt: skip
             for gqm in messages:
                 if gqm.message_id is None:
+                    continue
+                if gqm.poll_id is not None:  # closing shows the results (and, in quiz mode, the answer)
+                    await _call(lambda gqm=gqm: bot.stop_poll(post.chat_id, gqm.message_id), what="final-poll")
                     continue
                 tq = await session.get(TestQuestion, gqm.test_question_id)
                 assert tq is not None
