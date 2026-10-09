@@ -84,7 +84,7 @@ TEXTS: dict[str, str] = {
     "menu.reports": "📈 Hisobotlar",
     "menu.groups": "👥 Guruhlar",
     "menu.settings": "⚙️ Sozlamalar",
-    "ai.not_configured": "⚠️ AI sozlanmagan: GROQ_API_KEY muhit o'zgaruvchisini kiriting. Hozircha faqat savollar bankidagi tasdiqlangan savollardan foydalaniladi.",
+    "ai.not_configured": "⚠️ AI sozlanmagan: Railway Variables'ga GEMINI_API_KEY yoki GROQ_API_KEY (yoki CEREBRAS_API_KEY / OPENROUTER_API_KEY) qo'shing. Hozircha faqat savollar bankidagi savollardan foydalaniladi.",
     "ai.not_configured_short": "AI sozlanmagan — faqat savollar banki ishlatiladi",
     # ------------------------------------------------------------------ employee
     "emp.btn.my_tests": "📚 Testlarim",
@@ -488,14 +488,14 @@ TEXTS: dict[str, str] = {
     "gen.reason.interrupted": "Bot qayta ishga tushgani uchun savollarni yig'ish to'xtadi — qayta bosing",
     "ai.usage": "🔢 AI sarfi: {req} so'rov · {total} token (kirish {inp}, chiqish {out})",
     "stats.ai_today": "🔢 Bugungi AI sarfi: {req} so'rov · {total} token (kirish {inp}, chiqish {out}) · keshdan: {cached}",
-    "ai.err.auth": "Groq API kaliti noto'g'ri (Railway'da GROQ_API_KEY ni tekshiring)",
-    "ai.err.model": "Groq modeli mavjud emas — Railway'da GROQ_MODEL ni o'chiring yoki openai/gpt-oss-120b qiling",
-    "ai.err.rate_limit": "Groq limiti tugadi — bir necha daqiqadan keyin qayta urinib ko'ring",
-    "ai.err.daily_limit": "Groq AI'ning kunlik bepul limiti tugadi. Taxminan {m} daqiqadan keyin «🔄 Davom ettirish» ni bosing (tuzilgan savollar saqlanadi) yoki Groq'da pullik tarifga o'ting",
+    "ai.err.auth": "AI kaliti noto'g'ri — Railway Variables'da {env} ni tekshiring",
+    "ai.err.model": "AI modeli mavjud emas — Railway'dagi model nomini (masalan GROQ_MODEL yoki GEMINI_MODEL) o'chirib qo'ying, standart model ishlatiladi",
+    "ai.err.rate_limit": "AI limiti vaqtincha tugadi — bir necha daqiqadan keyin qayta urinib ko'ring",
+    "ai.err.daily_limit": "Ulangan barcha AI xizmatlarining bepul limiti tugadi. Taxminan {m} daqiqadan keyin «🔄 Davom ettirish» ni bosing (tuzilgan savollar saqlanadi) yoki yana bir AI kalitini qo'shing",
     "ct.btn.resume": "🔄 Davom ettirish",
     "ct.resuming": "⏳ Test tuzish davom ettirilmoqda: {n} ta savol. Avval tuzilgan savollar qayta ishlatiladi…",
     "ct.interrupted": "⚠️ «{title}» testini tuzish bot qayta ishga tushgani sababli to'xtadi. Tuzilgan savollar saqlangan — «🔄 Davom ettirish» ni bosing.",
-    "ai.err.unreachable": "Groq serveriga ulanib bo'lmadi — keyinroq qayta urinib ko'ring",
+    "ai.err.unreachable": "AI serveriga ulanib bo'lmadi — keyinroq qayta urinib ko'ring",
     "ai.err.invalid_response": "AI noto'g'ri formatda javob qaytardi — qayta urinib ko'ring",
     "gen.reason.ai_not_configured": "AI sozlanmagan (GROQ_API_KEY)",
     "gen.reason.option_count": "Variantlar soni noto'g'ri",
@@ -893,6 +893,7 @@ TEXTS: dict[str, str] = {
         "🕒 Vaqt zonasi: {tz}\n🤖 AI: {ai} ({model})\n🧭 Embedding: {emb}\n🗄 Vektor ombori: {backend}\n"
         "👨‍💼 Adminlar soni: {admins}\n🔌 Rejim: {mode}"
     ),
+    "settings.ai_wait": "⏳ {m} daq",
     "settings.int_prompt": "{name}: yangi qiymatni yuboring ({min}–{max}):",
     "settings.int_bad": "⚠️ {min} dan {max} gacha butun son yuboring.",
 }

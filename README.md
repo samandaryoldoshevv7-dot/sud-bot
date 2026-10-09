@@ -222,7 +222,12 @@ To'liq ro'yxat va izohlar: [`.env.example`](.env.example).
 | `BOT_TOKEN` | ✅ | — | @BotFather tokeni |
 | `DATABASE_URL` | ✅ | — | `postgresql://user:pass@host:5432/db` (Railway: `${{Postgres.DATABASE_URL}}`) |
 | `ADMIN_TELEGRAM_IDS` (yoki `ADMIN_IDS`) | ✅ | — | Vergul bilan: `123456789,987654321`. **Adminlik faqat shu ro'yxatdan** |
-| `GROQ_API_KEY` | ✅* | — | *Bo'lmasa AI generatsiya o'chadi, faqat bankdagi tasdiqlangan savollar ishlatiladi |
+| `GEMINI_API_KEY` | ✅* | — | Google AI Studio kaliti (https://aistudio.google.com/apikey) |
+| `GROQ_API_KEY` | ✅* | — | Groq kaliti. *Kamida bitta AI kaliti kerak, bo'lmasa AI generatsiya o'chadi, faqat bankdagi savollar ishlatiladi |
+| `CEREBRAS_API_KEY`, `OPENROUTER_API_KEY` | | — | Qo'shimcha (ixtiyoriy) AI xizmatlari |
+| `AI_PROVIDER_ORDER` | | `gemini,groq,cerebras,openrouter` | AI xizmatlari navbati: biri limitga yetsa, keyingisiga o'tiladi |
+| `GEMINI_MODEL` / `GEMINI_VALIDATION_MODEL` | | `gemini-2.5-flash` / `gemini-2.5-flash-lite` | Gemini modellari (asosiy / tekshiruv) |
+| `CEREBRAS_MODEL`, `OPENROUTER_MODEL` | | `gpt-oss-120b`, `openai/gpt-oss-120b:free` | Qo'shimcha xizmatlar modellari |
 | `TIMEZONE` | | `Asia/Tashkent` | Ko'rsatish vaqt zonasi |
 | `GROQ_MODEL` | | `openai/gpt-oss-120b` | Asosiy model (o'chirilgan bo'lsa avtomatik zaxiraga o'tadi) |
 | `GROQ_FALLBACK_MODELS` | | `openai/gpt-oss-20b,qwen/qwen3-32b,llama-3.1-8b-instant` | Zaxira modellar |
@@ -439,6 +444,18 @@ metama'lumotlari (xodimlarga ko'rsatilmaydi). Manba yetarli bo'lmasa model `reje
 yaratilmaydi. Promptlar: [`app/ai/prompts.py`](app/ai/prompts.py) (generatsiya, validatsiya,
 izoh, manba tekshiruvi).
 
+**Bir nechta AI xizmati (navbat bilan):**
+* Har bir xizmat **o'zining bitta rasmiy kaliti** bilan ishlatiladi (bitta xizmatda bir nechta
+  akkaunt/kalit orqali limitni aylanib o'tish yo'q). Navbat `AI_PROVIDER_ORDER` bo'yicha:
+  Gemini → Groq → Cerebras → OpenRouter (faqat kaliti bor xizmatlar).
+* Xizmat kunlik limitga yetsa, kaliti noto'g'ri bo'lsa yoki javob bermasa — keyingisiga o'tiladi;
+  u limit tiklanguncha o'tkazib yuboriladi, keyin yana ishlatiladi. Hammasi tugasa, admin «N daqiqadan
+  keyin» degan xabar oladi va «🔄 Davom ettirish» bilan davom ettiradi.
+* Qaysi xizmat javob bermasin, savollar o'sha promptlar va o'sha 3 bosqichli tekshiruvdan o'tadi.
+* Holat: **⚙️ Sozlamalar** → «🤖 AI: Google Gemini ✅ → Groq ⏳ 45 daq».
+* ⚠️ Bepul tariflarda ba'zi xizmatlar (masalan, Gemini) yuborilgan matnni o'z xizmatini yaxshilashga
+  ishlatishi mumkin — shaxsiy ma'lumotli fayllarni yuklamang.
+
 **Groq limitini tejash:**
 * Groq'ga faqat savol tuzishda murojaat qilinadi. Xodimlarning xabarlari, testlar va natijalar AI ishlatmaydi,
   suhbat tarixi (history) yuborilmaydi.
@@ -484,7 +501,7 @@ handlerlar (soxta Telegram transport bilan), lokalizatsiya kalitlari, sirlar yo'
 
 > Testlarda LLM o'rniga **faqat testlar uchun** skriptlangan provayder ishlatiladi (u ham manba
 > matnidan haqiqiy gaplarni oladi, shuning uchun butun validatsiya zanjiri haqiqatan ishlaydi).
-> Ishlab chiqarishda faqat Groq ishlatiladi.
+> Ishlab chiqarishda kaliti berilgan haqiqiy AI xizmatlari ishlatiladi.
 
 ---
 
@@ -511,7 +528,7 @@ handlerlar (soxta Telegram transport bilan), lokalizatsiya kalitlari, sirlar yo'
 | `TelegramConflictError` | Ikki nusxa polling qilyapti: replikalar 1 ta bo'lsin; lokal botni o'chiring. |
 | `/admin` → «faqat administratorlar uchun» | `ADMIN_TELEGRAM_IDS` da ID yo'q yoki xato; o'zgartirgandan so'ng qayta deploy. |
 | Material `FAILED: PDF ichida matn topilmadi` | Skanerlangan PDF — OCR qilingan PDF yoki DOCX yuklang. |
-| «AI sozlanmagan» | `GROQ_API_KEY` qo'shing. |
+| «AI sozlanmagan» | `GEMINI_API_KEY` yoki `GROQ_API_KEY` qo'shing. |
 | Savollar kam yaratildi / «Yetishmayapti» | Manbada fakt kam yoki tekshiruv qat'iy. Ko'proq material yuklang, savollar sonini kamaytiring, test sahifasida «🧠 Savollarni yig'ish» ni qayta bosing. Sabablar statistikasi xabarda ko'rsatiladi. |
 | `Groq rate limit` | Bepul tarif limiti — biroz kuting, `GROQ_VALIDATION_MODEL` ni sozlang yoki tarifni oshiring. |
 | `Semantik indeks: yo'q` | Embedding modeli yuklanmadi (internet yo'q) — full-text qidiruv ishlaydi. Keyin `python -m scripts.reembed --only-missing`. |

@@ -22,6 +22,8 @@ os.environ["ADMIN_TELEGRAM_IDS"] = "1000,1001"
 os.environ["EMBEDDING_PROVIDER"] = "none"
 os.environ["TIMEZONE"] = "Asia/Tashkent"
 os.environ["GROQ_API_KEY"] = ""
+for _key in ("GEMINI_API_KEY", "CEREBRAS_API_KEY", "OPENROUTER_API_KEY"):
+    os.environ[_key] = ""
 os.environ["LOG_FORMAT"] = "text"
 
 import pytest_asyncio  # noqa: E402

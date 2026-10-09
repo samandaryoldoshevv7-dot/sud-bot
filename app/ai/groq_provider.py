@@ -133,7 +133,7 @@ class GroqProvider(LLMProvider):
     name = "groq"
 
     def __init__(self, settings: Settings):
-        if not settings.ai_enabled:
+        if not settings.groq_enabled:
             raise AINotConfiguredError("GROQ_API_KEY is not configured")
         self._settings = settings
         # The SDK retries 408/409/429/5xx with exponential backoff and honours Retry-After.

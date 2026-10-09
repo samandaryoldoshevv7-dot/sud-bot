@@ -625,8 +625,9 @@ def _friendly_error(error: str) -> str:
         return known[error]
     lowered = error.lower()
     if "authentication" in lowered:
-        return t("ai.err.auth")
-    if "models unavailable" in lowered or "no usable groq model" in lowered:
+        env = re.search(r"check ([A-Z_]+_API_KEY)", error)
+        return t("ai.err.auth", env=env.group(1) if env else "API kalitlari")
+    if "models unavailable" in lowered or "no usable" in lowered:
         return t("ai.err.model")
     daily = re.search(r"daily rate limit exceeded; retry in (\d+) min", lowered)
     if daily:
