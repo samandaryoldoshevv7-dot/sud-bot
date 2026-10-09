@@ -31,6 +31,7 @@ SPECS: dict[str, SettingSpec] = {
         SettingSpec("reminder_hours_before", 3, "int", 0, 72),
         SettingSpec("weak_topic_min_answers", 3, "int", 1, 50),
         SettingSpec("auto_generate_questions", 20, "int", 0, 50),
+        SettingSpec("quiz_polls", True, "bool"),  # questions as native Telegram quiz polls
     ]
 }
 

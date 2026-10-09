@@ -127,6 +127,11 @@ TEXTS: dict[str, str] = {
     "quiz.correct_answer": "✅ <b>TO'G'RI JAVOB:</b>",
     "quiz.explanation": "💡 Izoh: {text}",
     "quiz.btn.close": "✖️ CHIQISH",
+    "quiz.btn.time": "⏳ Qolgan vaqt",
+    "quiz.time_alert": "⏳ Qolgan vaqt: {d}\n🕓 Tugash: {end}",
+    "quiz.poll_explanation_source": "📚 {s}",
+    "quiz.poll_explanation": "💡 {text}",
+    "quiz.full_explanation": "<b>[{n}/{total}]</b> 💡 <b>Izoh:</b> {text}",
     "quiz.paused": "⏸ Test vaqtincha to'xtatilgan. Javob qabul qilinmadi.",
     "emp.my_tests.deadline": "muddat: {d}",
     "emp.results.title": "📊 <b>Mening natijalarim</b>",
@@ -879,6 +884,7 @@ TEXTS: dict[str, str] = {
     "settings.ranking_min_attempts": "🏆 Reyting uchun minimal testlar soni: {v}",
     "settings.reminder_hours_before": "⏰ Muddatdan necha soat oldin eslatma (0 = o'chiq): {v}",
     "settings.weak_topic_min_answers": "🏷 Mavzu tahlili uchun minimal javoblar: {v}",
+    "settings.quiz_polls": "📊 Savollar Telegram quiz (viktorina) ko'rinishida: {v}",
     "settings.auto_generate_questions": "🧠 Material yuklanganda avtomatik savollar soni (0 = o'chiq): {v}",
     "settings.btn.auto_approve_group_members": "👥 Guruh a'zolarini avto-tasdiqlash",
     "settings.btn.auto_approve_all": "🔓 Hammani avto-tasdiqlash",
@@ -887,6 +893,7 @@ TEXTS: dict[str, str] = {
     "settings.btn.ranking_min_attempts": "🏆 Reyting minimumi",
     "settings.btn.reminder_hours_before": "⏰ Eslatma vaqti",
     "settings.btn.weak_topic_min_answers": "🏷 Mavzu minimumi",
+    "settings.btn.quiz_polls": "📊 Telegram quiz ko'rinishi",
     "settings.btn.auto_generate_questions": "🧠 Avto-savollar soni",
     "settings.env": (
         "🔧 <b>Muhit (o'zgartirish — Railway Variables orqali):</b>\n"

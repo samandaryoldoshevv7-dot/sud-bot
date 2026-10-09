@@ -5,7 +5,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from aiogram import BaseMiddleware
-from aiogram.types import CallbackQuery, ChatMemberUpdated, Message, TelegramObject, Update
+from aiogram.types import CallbackQuery, ChatMemberUpdated, Message, PollAnswer, TelegramObject, Update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services import groups as group_service
@@ -38,6 +38,8 @@ class UserMiddleware(BaseMiddleware):
             chat = inner.message.chat if inner.message else None
         elif isinstance(inner, ChatMemberUpdated):
             tg_user, chat = inner.from_user, inner.chat
+        elif isinstance(inner, PollAnswer):  # answers to the quiz polls the bot sent in private chats
+            tg_user = inner.user
 
         data["user"] = None
         data["is_admin"] = False

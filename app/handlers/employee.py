@@ -11,7 +11,7 @@ import logging
 
 from aiogram import Bot, F, Router
 from aiogram.exceptions import TelegramBadRequest
-from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
+from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message, PollAnswer
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.handlers.formatting import (
@@ -27,12 +27,14 @@ from app.keyboards.common import kb
 from app.keyboards.employee import answer_kb
 from app.locales import t
 from app.models import AnswerReveal, AttemptStatus, Test, TestAttempt, TestStatus, User, UserStatus
+from app.schemas.ai import LETTERS
 from app.services import attempts as attempt_service
+from app.services import quiz_polls, settings_service
 from app.services.attempts import AnswerOutcome, MyTestState, StartError
 from app.services.test_builder import source_names
 from app.statistics.sources import attempt_source_breakdown
 from app.utils.text import esc, pct, split_message, truncate
-from app.utils.time import fmt_dt, utcnow
+from app.utils.time import fmt_dt, fmt_span, utcnow
 
 logger = logging.getLogger(__name__)
 router = Router(name="employee")
@@ -159,7 +161,54 @@ async def _question_view(session: AsyncSession, attempt: TestAttempt) -> tuple[s
     return question_text(attempt, tq, item, position), answer_kb(attempt.id, position, tq, item)
 
 
+async def _send_poll(bot: Bot, chat_id: int, session: AsyncSession, attempt: TestAttempt) -> bool:
+    """The current question as a native Telegram quiz poll. False: show it the classic way."""
+    if not await settings_service.get_value(session, "quiz_polls"):
+        return False
+    current = await attempt_service.current_question(session, attempt)
+    if current is None:
+        return False
+    tq, item = current
+    position = attempt.current_index
+    test = await session.get(Test, attempt.test_id)
+    spec = quiz_polls.build(attempt, tq, item, position, test.answer_reveal if test else AnswerReveal.IMMEDIATE)
+    if spec is None:
+        return False
+    for old in await quiz_polls.take_open(session, attempt.id, position):  # resumed: one live poll only
+        try:
+            await bot.delete_message(old.chat_id, old.message_id)
+        except TelegramBadRequest:
+            pass
+    try:
+        sent = await bot.send_poll(
+            chat_id,
+            question=spec.question,
+            options=spec.options,
+            type="quiz" if spec.quiz else "regular",
+            correct_option_ids=[spec.correct_option_id] if spec.correct_option_id is not None else None,
+            explanation=spec.explanation,
+            explanation_parse_mode=None,
+            question_parse_mode=None,
+            is_anonymous=False,
+            allows_multiple_answers=False,
+            allows_revoting=False,  # the first answer is final, as with the buttons
+            shuffle_options=False,  # the order is this employee's own shuffled layout
+            reply_markup=kb([(t("quiz.btn.time"), EmpCB(a="time", id=attempt.id))]),
+        )
+    except TelegramBadRequest as exc:
+        logger.warning("Quiz poll rejected; showing the question as text", extra={"error": str(exc)[:200]})
+        return False
+    if sent.poll is None:
+        return False
+    await quiz_polls.remember(session, sent.poll.id, attempt.id, position, chat_id, sent.message_id,
+                              spec.explanation_cut)  # fmt: skip
+    await attempt_service.set_message_ref(session, attempt.id, chat_id, sent.message_id)
+    return True
+
+
 async def send_current_question(bot: Bot, chat_id: int, session: AsyncSession, attempt: TestAttempt) -> None:
+    if await _send_poll(bot, chat_id, session, attempt):
+        return
     view = await _question_view(session, attempt)
     if view is None:
         return
@@ -286,6 +335,68 @@ async def cb_answer(callback: CallbackQuery, callback_data: AnsCB, session: Asyn
     except TelegramBadRequest as exc:
         logger.debug("Could not edit answered question", extra={"error": str(exc)[:100]})
         await message.answer(text, reply_markup=markup)
+
+
+@router.poll_answer()
+async def on_poll_answer(poll_answer: PollAnswer, session: AsyncSession, bot: Bot, user: User | None) -> None:
+    """A variant was chosen in a quiz poll: same rules as a button press (final, per-user, checked
+    on the server). Telegram itself shows right/wrong and the explanation; the next question follows."""
+    if user is None or not poll_answer.option_ids:
+        return  # an answer can't be taken back: a retracted vote changes nothing
+    poll = await quiz_polls.find(session, poll_answer.poll_id)
+    if poll is None or poll_answer.option_ids[0] >= len(LETTERS):
+        return
+    chat_id, message_id, cut, position = poll.chat_id, poll.message_id, poll.explanation_cut, poll.position
+    result = await attempt_service.submit_answer(
+        session, user, poll.attempt_id, position, LETTERS[poll_answer.option_ids[0]]
+    )
+    if result.outcome == AnswerOutcome.PAUSED:
+        await bot.send_message(chat_id, t("quiz.paused"))
+        return
+    if result.outcome not in (AnswerOutcome.ACCEPTED, AnswerOutcome.EXPIRED):
+        return  # answered already (e.g. an older copy of the poll) or the attempt is over
+    attempt = result.attempt
+    assert attempt is not None
+    test = await session.get(Test, attempt.test_id)
+    assert test is not None
+    try:  # the time button is no longer needed under an answered question
+        await bot.edit_message_reply_markup(chat_id=chat_id, message_id=message_id)
+    except TelegramBadRequest:
+        pass
+    if result.outcome == AnswerOutcome.EXPIRED:
+        await bot.send_message(chat_id, t("emp.answer.expired"))
+        text, markup = await _final_result(session, test, attempt)
+        await bot.send_message(chat_id, text, reply_markup=markup)
+        return
+    if (
+        test.answer_reveal == AnswerReveal.IMMEDIATE
+        and cut
+        and result.question is not None
+        and result.question.explanation
+    ):
+        await bot.send_message(
+            chat_id,
+            t("quiz.full_explanation", n=position + 1, total=attempt.total_questions,
+              text=esc(result.question.explanation)),
+        )  # fmt: skip
+    if attempt.status == AttemptStatus.IN_PROGRESS:
+        await send_current_question(bot, chat_id, session, attempt)
+        return
+    text, markup = await _final_result(session, test, attempt)
+    await bot.send_message(chat_id, text, reply_markup=markup)
+
+
+@router.callback_query(EmpCB.filter(F.a == "time"))
+async def cb_time_left(callback: CallbackQuery, callback_data: EmpCB, session: AsyncSession, user: User | None) -> None:
+    attempt = await session.get(TestAttempt, callback_data.id)
+    if user is None or attempt is None or attempt.user_id != user.id:
+        await callback.answer()
+        return
+    left = (attempt.deadline_at - utcnow()).total_seconds()
+    if attempt.status != AttemptStatus.IN_PROGRESS or left <= 0:
+        await callback.answer(t("emp.answer.not_in_progress"), show_alert=True)
+        return
+    await callback.answer(t("quiz.time_alert", d=fmt_span(left), end=fmt_dt(attempt.deadline_at)), show_alert=True)
 
 
 @router.callback_query(EmpCB.filter(F.a == "next"))

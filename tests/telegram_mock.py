@@ -18,9 +18,22 @@ from aiogram.methods import (
     GetMe,
     SendDocument,
     SendMessage,
+    SendPoll,
+    StopPoll,
     TelegramMethod,
 )
-from aiogram.types import Chat, ChatMemberLeft, ChatMemberMember, Document, File, Message, Update, User
+from aiogram.types import (
+    Chat,
+    ChatMemberLeft,
+    ChatMemberMember,
+    Document,
+    File,
+    Message,
+    Poll,
+    PollOption,
+    Update,
+    User,
+)
 
 _ids = itertools.count(1000)
 
@@ -54,6 +67,19 @@ class RecordingSession(BaseSession):
                 text=getattr(method, "text", None) or "",
                 from_user=User(id=42, is_bot=True, first_name="Court Bot"),
             )
+        if isinstance(method, SendPoll):
+            chat_id = int(method.chat_id)
+            return Message(
+                message_id=next(_ids),
+                date=now,
+                chat=Chat(id=chat_id, type="private"),
+                from_user=User(id=42, is_bot=True, first_name="Court Bot"),
+                poll=_poll(method, str(next(_ids))),
+            )
+        if isinstance(method, StopPoll):
+            return Poll(id="stopped", question="q", options=[PollOption(persistent_id="0", text="x", voter_count=0)],
+                        total_voter_count=0, is_closed=True, is_anonymous=False, type="regular",
+                        allows_multiple_answers=False, allows_revoting=False, members_only=False)  # fmt: skip
         if isinstance(method, EditMessageText):
             return Message(
                 message_id=method.message_id or 1,
@@ -89,6 +115,9 @@ class RecordingSession(BaseSession):
     def sent_to(self, chat_id: int) -> list[SendMessage]:
         return [m for m in self.requests if isinstance(m, SendMessage) and int(m.chat_id) == chat_id]
 
+    def polls(self) -> list[SendPoll]:
+        return [m for m in self.requests if isinstance(m, SendPoll)]
+
     def alerts(self) -> list[str]:
         return [m.text or "" for m in self.requests if isinstance(m, AnswerCallbackQuery)]
 
@@ -103,6 +132,42 @@ class RecordingSession(BaseSession):
 
 
 _update_ids = itertools.count(1)
+_poll_ids: dict[int, str] = {}  # id(SendPoll request) -> poll id given to it
+
+
+def _poll(method: SendPoll, poll_id: str) -> Poll:
+    _poll_ids[id(method)] = poll_id
+    return Poll(
+        id=poll_id,
+        question=method.question,
+        options=[
+            PollOption(persistent_id=str(i), text=o if isinstance(o, str) else o.text, voter_count=0)
+            for i, o in enumerate(method.options)
+        ],
+        total_voter_count=0,
+        is_closed=False,
+        is_anonymous=False,
+        type=method.type or "regular",
+        allows_multiple_answers=False,
+        allows_revoting=bool(method.allows_revoting),
+        members_only=False,
+    )
+
+
+def poll_id_of(method: SendPoll) -> str:
+    return _poll_ids[id(method)]
+
+
+def poll_answer_update(user_id: int, poll_id: str, option_ids: list[int], first_name: str = "Ali") -> Update:
+    from aiogram.types import PollAnswer
+
+    user = User(id=user_id, is_bot=False, first_name=first_name)
+    return Update(
+        update_id=next(_update_ids),
+        poll_answer=PollAnswer(
+            poll_id=poll_id, user=user, option_ids=option_ids, option_persistent_ids=[str(i) for i in option_ids]
+        ),
+    )
 
 
 def message_update(

@@ -295,6 +295,23 @@ class UserAnswer(Base):
     answered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
+class QuizPoll(Base):
+    """A question sent as a native Telegram quiz poll: Telegram reports the answer by ``poll_id``
+    only, so this row tells which attempt and question it belongs to."""
+
+    __tablename__ = "quiz_polls"
+
+    poll_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    attempt_id: Mapped[int] = mapped_column(
+        ForeignKey("test_attempts.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    position: Mapped[int] = mapped_column(Integer, nullable=False)
+    chat_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    message_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    explanation_cut: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class GroupTestPost(TimestampMixin, Base):
     """A test running inside a Telegram group (header message + one message per question)."""
 
