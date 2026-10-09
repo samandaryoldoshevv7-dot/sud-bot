@@ -120,3 +120,11 @@ def _fresh_ai_cache():
     clear_cache()
     yield
     clear_cache()
+
+
+@pytest.fixture(autouse=True)
+def _classic_questions(monkeypatch):
+    """Most tests drive the classic text + buttons question; tests of the quiz polls switch them on."""
+    from app.services.settings_service import SPECS, SettingSpec
+
+    monkeypatch.setitem(SPECS, "quiz_polls", SettingSpec("quiz_polls", False, "bool"))

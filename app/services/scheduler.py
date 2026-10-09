@@ -156,6 +156,13 @@ async def notify_time_over(bot: Bot, session: AsyncSession, attempt) -> None:
             pass
         except Exception as exc:
             logger.debug("Could not disable question buttons", extra={"error": str(exc)[:100]})
+        from app.services import quiz_polls
+
+        if await quiz_polls.by_message(session, attempt.chat_id, attempt.last_message_id) is not None:
+            try:  # a quiz poll: close it so no more votes can be cast
+                await bot.stop_poll(chat_id=attempt.chat_id, message_id=attempt.last_message_id)
+            except Exception as exc:
+                logger.debug("Could not close the quiz poll", extra={"error": str(exc)[:100]})
     await safe_send(bot, user.telegram_id, result_text(test, attempt, user, await _source_rows(session, attempt)))
 
 
