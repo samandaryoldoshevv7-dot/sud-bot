@@ -62,6 +62,13 @@ async def test_questions_come_as_quiz_polls_and_answers_are_final(tg, session_ma
         await tg(poll_answer_update(7101, poll_id, []))  # a retracted vote changes nothing
         assert not tg.session.requests
         await tg(poll_answer_update(7101, poll_id, [choice]))
+        # A lasting card (Telegram's own pop-up disappears): verdict, correct answer, source.
+        card = next(x for x in tg.session.texts() if x.startswith(f"<b>[{pos + 1}/4]</b> "))
+        if pos == 0:
+            assert "❌ <b>NOTO'G'RI JAVOB</b>" in card and f"Sizning javobingiz: {LETTERS[choice]})" in card
+            assert f"✅ To'g'ri javob: {LETTERS[correct]})" in card and "📚 Manba: " in card
+        else:
+            assert "✅ <b>TO'G'RI JAVOB</b>" in card and "Sizning javobingiz" not in card
         if pos < 3:
             current = tg.session.polls()[-1]
             assert current.question.startswith(f"[{pos + 2}/4] ")
@@ -146,7 +153,7 @@ async def test_question_too_long_for_a_poll_is_shown_as_text(tg, session_maker):
     assert any("<b>[1/4]</b>" in x and "○ <b>A)</b>" in x for x in tg.session.texts())
 
 
-async def test_long_explanation_is_sent_in_full_after_the_answer(tg, session_maker):  # noqa: F811
+async def test_long_explanation_stays_in_full_in_the_answer_card(tg, session_maker):  # noqa: F811
     async with session_maker() as session:
         test = await _two_source_test(session_maker, session)
         rows = (await session.execute(select(TestQuestion).where(TestQuestion.test_id == test.id))).scalars().all()
@@ -163,8 +170,8 @@ async def test_long_explanation_is_sent_in_full_after_the_answer(tg, session_mak
         attempt_id = (await session.execute(select(TestAttempt.id).where(TestAttempt.test_id == test_id))).scalar_one()
     tg.session.clear()
     await tg(poll_answer_update(7107, poll_id_of(poll), [await _correct_index(session_maker, attempt_id, 0)]))
-    full = [x for x in tg.session.texts() if "💡 <b>Izoh:</b>" in x]
-    assert full and full[0].count("batafsil belgilaydi") == 5
+    card = [x for x in tg.session.texts() if "💡 Izoh:" in x]
+    assert card and card[0].count("batafsil belgilaydi") == 5  # the whole explanation, not the cut one
 
 
 def test_classic_mode_is_still_available(monkeypatch):
@@ -172,3 +179,114 @@ def test_classic_mode_is_still_available(monkeypatch):
 
     assert SPECS["quiz_polls"].default is True  # this module's fixture
     assert quiz_polls.QUESTION_MAX == 300 and quiz_polls.OPTION_MAX == 100 and quiz_polls.EXPLANATION_MAX == 200
+
+
+def test_limits_are_counted_like_telegram_counts_them():
+    """Emoji count as 2: a 199-character explanation with two emoji is 201 for Telegram, which
+    rejected the poll and the question fell back to the old text look."""
+    from app.services import quiz_polls
+
+    assert quiz_polls.tg_len("📚 a") == 4 and quiz_polls.tg_len("o‘") == 2
+    cut = quiz_polls._cut("📚 " + "x" * 300, 200)
+    assert quiz_polls.tg_len(cut) <= 200 and cut.endswith("…")
+
+
+# ------------------------------------------------------------------------------ in the group
+
+
+async def _wait_background():
+    import asyncio
+
+    from app.services import background
+
+    for _ in range(200):
+        if background.running_count() == 0:
+            return
+        await asyncio.sleep(0.02)
+
+
+async def test_group_mode_posts_shared_quiz_polls_answered_per_member(tg, session_maker):  # noqa: F811
+    from aiogram.methods import SendPoll, StopPoll
+
+    from app.keyboards.callbacks import GroupStartCB
+    from app.models import DeliveryMode, Test, TestStatus
+    from app.services import group_tests
+    from app.services import groups as group_service
+    from tests.factories import make_employee
+    from tests.test_mixed_and_timer import ADMIN, GROUP_CHAT
+
+    async with session_maker() as session:
+        admin = await make_employee(session, ADMIN, "Admin Bosh")
+        group, _ = await group_service.register_group(session, GROUP_CHAT, "Sud xodimlari", admin)
+        test = await _two_source_test(session_maker, session, group_id=group.id, delivery_mode=DeliveryMode.GROUP)
+        post = await group_tests.ensure_post(session, test, group)
+        test_id, post_id = test.id, post.id
+    assert await group_tests.send_post(tg.bot, session_maker, post_id)
+    header = tg.session.sent_to(GROUP_CHAT)[0]
+    assert [b.text for row in header.reply_markup.inline_keyboard for b in row] == [
+        "🤖 1. Botda ishlash", "👥 2. Guruhda ishlash"
+    ]  # fmt: skip
+    await tg(message_update(7301, "/start", "Ali"))  # Ali also opened the bot privately
+
+    # 👥 2. Guruhda ishlash: the 4 questions are posted ONCE into the group as quiz polls.
+    tg.session.clear()
+    await tg(callback_update(7301, GroupStartCB(p=post_id, m="g").pack(), "Ali", chat_id=GROUP_CHAT))
+    await _wait_background()
+    assert any("Savollar shu guruhda" in a for a in tg.session.alerts())
+    polls = [m for m in tg.session.requests if isinstance(m, SendPoll) and int(m.chat_id) == GROUP_CHAT]
+    assert len(polls) == 4 and [p.question[:5] for p in polls] == ["[1/4]", "[2/4]", "[3/4]", "[4/4]"]
+    assert all(p.type == "quiz" and p.is_anonymous is False and p.hide_results_until_closes for p in polls)
+    assert all(p.allows_revoting is False for p in polls)
+    tg.session.clear()
+    await tg(callback_update(7302, GroupStartCB(p=post_id, m="g").pack(), "Vali", chat_id=GROUP_CHAT))
+    await _wait_background()
+    assert not tg.session.polls()  # Vali uses the same shared polls
+
+    # Ali and Vali answer the same first poll: each answer is stored for that member only.
+    first, correct = polls[0], polls[0].correct_option_ids[0]
+    tg.session.clear()
+    await tg(poll_answer_update(7301, poll_id_of(first), [correct], "Ali"))
+    await tg(poll_answer_update(7302, poll_id_of(first), [(correct + 1) % 4], "Vali"))
+    await tg(poll_answer_update(7301, poll_id_of(first), [(correct + 2) % 4], "Ali"))  # second try: ignored
+    async with session_maker() as session:
+        rows = (
+            await session.execute(
+                select(UserAnswer.telegram_id, UserAnswer.is_correct).order_by(UserAnswer.telegram_id)
+            )
+        ).all()
+        assert rows == [(7301, True), (7302, False)]
+    # Ali has the private chat: the lasting answer card is sent there (not into the group).
+    assert any("TO'G'RI JAVOB" in m.text for m in tg.session.sent_to(7301))
+    assert not tg.session.sent_to(GROUP_CHAT)
+
+    # The test ends: the polls are closed (results and the correct answers become visible).
+    async with session_maker() as session:
+        test = await session.get(Test, test_id)
+        test.status = TestStatus.EXPIRED
+        await session.commit()
+    tg.session.clear()
+    await group_tests.finalize_posts(tg.bot, session_maker)
+    assert len([m for m in tg.session.requests if isinstance(m, StopPoll)]) == 4
+
+
+async def test_bot_button_in_the_group_opens_the_private_chat(tg, session_maker):  # noqa: F811
+    from aiogram.methods import AnswerCallbackQuery
+
+    from app.keyboards.callbacks import GroupStartCB
+    from app.models import DeliveryMode
+    from app.services import group_tests
+    from app.services import groups as group_service
+    from tests.factories import make_employee
+    from tests.test_mixed_and_timer import ADMIN, GROUP_CHAT
+
+    async with session_maker() as session:
+        admin = await make_employee(session, ADMIN, "Admin Bosh")
+        group, _ = await group_service.register_group(session, GROUP_CHAT, "Sud xodimlari", admin)
+        test = await _two_source_test(session_maker, session, group_id=group.id, delivery_mode=DeliveryMode.GROUP)
+        post = await group_tests.ensure_post(session, test, group)
+        test_id, post_id = test.id, post.id
+    tg.session.clear()
+    await tg(callback_update(7401, GroupStartCB(p=post_id, m="b").pack(), "Ali", chat_id=GROUP_CHAT))
+    urls = [m.url for m in tg.session.requests if isinstance(m, AnswerCallbackQuery)]
+    assert urls and urls[0].endswith(f"start=run_{test_id}")
+    assert not tg.session.polls()

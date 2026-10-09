@@ -346,6 +346,8 @@ class GroupQuestionMessage(Base):
     position: Mapped[int] = mapped_column(Integer, nullable=False)  # 0-based
     opts: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
     message_id: Mapped[int | None] = mapped_column(Integer)
+    # Set when the question was posted as a native Telegram quiz poll (answers arrive by poll id).
+    poll_id: Mapped[str | None] = mapped_column(String(64), unique=True)
     rendered_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     rendered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 

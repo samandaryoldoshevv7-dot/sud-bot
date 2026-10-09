@@ -126,12 +126,13 @@ TEXTS: dict[str, str] = {
     "quiz.wrong": "❌ <b>NOTO'G'RI JAVOB</b>",
     "quiz.correct_answer": "✅ <b>TO'G'RI JAVOB:</b>",
     "quiz.explanation": "💡 Izoh: {text}",
-    "quiz.btn.close": "✖️ CHIQISH",
+    "quiz.btn.close": "➡️ Keyingi savol",
+    "quiz.your_answer_inline": "Sizning javobingiz: {a}",
+    "quiz.correct_answer_inline": "✅ To'g'ri javob: {a}",
     "quiz.btn.time": "⏳ Qolgan vaqt",
     "quiz.time_alert": "⏳ Qolgan vaqt: {d}\n🕓 Tugash: {end}",
     "quiz.poll_explanation_source": "📚 {s}",
     "quiz.poll_explanation": "💡 {text}",
-    "quiz.full_explanation": "<b>[{n}/{total}]</b> 💡 <b>Izoh:</b> {text}",
     "quiz.paused": "⏸ Test vaqtincha to'xtatilgan. Javob qabul qilinmadi.",
     "emp.my_tests.deadline": "muddat: {d}",
     "emp.results.title": "📊 <b>Mening natijalarim</b>",
@@ -205,8 +206,17 @@ TEXTS: dict[str, str] = {
     # ------------------------------------------------------------------ tests inside a group
     "gt.header": "📚 <b>YANGI TEST</b>\n\n<b>{title}</b>\n\n📝 {n} ta savol\n⏱ {duration}",
     "gt.header_hint": (
-        "▶️ <b>TESTNI BOSHLASH</b> tugmasini bosing — test siz uchun alohida, bot bilan shaxsiy chatda ochiladi. "
-        "Javoblaringizni boshqalar ko'rmaydi; vaqt tugmani bosgan paytingizdan hisoblanadi."
+        "Testni qayerda ishlashni tanlang:\n"
+        "🤖 <b>1. Botda ishlash</b> — savollar bot bilan shaxsiy chatda, faqat sizga.\n"
+        "👥 <b>2. Guruhda ishlash</b> — savollar shu guruhda viktorina ko'rinishida. Har kim o'zi javob beradi: "
+        "natijangizni faqat siz ko'rasiz, boshqalarning tanlovi test tugaguncha yashirin.\n\n"
+        "Javobni o'zgartirib bo'lmaydi; vaqt birinchi bosgan paytingizdan hisoblanadi."
+    ),
+    "gt.btn.in_bot": "🤖 1. Botda ishlash",
+    "gt.btn.in_group": "👥 2. Guruhda ishlash",
+    "gt.alert.in_group": (
+        "👥 Savollar shu guruhda (pastda). Har bir savolga bir marta javob bering — natijangizni faqat siz "
+        "ko'rasiz. Javob berilgan: {done}/{total}."
     ),
     "gt.header_finished": "🏁 <b>TEST YAKUNLANDI</b>\n\n📚 <b>{title}</b>\n📝 {n} ta savol\nYopildi: {end}",
     "gt.participants": "👥 Qatnashmoqda: <b>{n}</b>",
@@ -231,7 +241,7 @@ TEXTS: dict[str, str] = {
     "gt.alert.blocked": "⛔️ Sizning testda qatnashish huquqingiz o'chirilgan.",
     "gt.alert.pending": "⏳ Avval administrator sizni tasdiqlashi kerak. Botga shaxsiy /start yozing.",
     "gt.alert.invalid": "Bu tugma eskirgan.",
-    "gt.admin_posted_ok": "✅ «{title}» testi «{group}» guruhiga yuborildi. Xodimlar «▶️ TESTNI BOSHLASH» ni bosadi va testni bot bilan shaxsiy chatda ishlaydi (har biri alohida).",
+    "gt.admin_posted_ok": "✅ «{title}» testi «{group}» guruhiga yuborildi. Xodimlar tanlaydi: «🤖 1. Botda ishlash» (shaxsiy chatda) yoki «👥 2. Guruhda ishlash» (guruhda viktorina, har kim o'zi uchun).",
     "gt.admin_post_failed": "❌ «{title}» testini «{group}» guruhiga yuborib bo'lmadi.\n\nTekshiring: bot guruhda bormi va xabar yozish huquqi bormi (botni guruhga <b>administrator</b> qiling), so'ng test sahifasida «▶️ Guruhda boshlash» ni qayta bosing.",
     "gt.admin_post_failed_auto": "❌ #{id} testini guruhga yuborib bo'lmadi. Botni guruhga administrator qiling va test sahifasida «▶️ Guruhda boshlash» ni bosing.",
     # ------------------------------------------------------------------ groups (in-group)

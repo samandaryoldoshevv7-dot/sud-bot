@@ -114,6 +114,28 @@ def answer_result_text(
     return "\n".join(lines)
 
 
+def poll_verdict_text(tq: TestQuestion, opts: list[str], position: int, total: int, selected: str) -> str:
+    """A lasting card under an answered quiz poll (Telegram's own explanation pop-up disappears)."""
+    letters = {LETTERS[i]: original for i, original in enumerate(opts)}
+    selected_original = letters.get(selected)
+    correct_display = next((d for d, o in letters.items() if o == tq.correct_option), "?")
+    head = f"<b>[{position + 1}/{total}]</b> "
+    lines = []
+    if selected_original == tq.correct_option:
+        lines.append(head + t("quiz.correct"))
+    else:
+        lines += [
+            head + t("quiz.wrong"),
+            t("quiz.your_answer_inline", a=f"{selected}) {esc(tq.options.get(selected_original or '', ''))}"),
+            t("quiz.correct_answer_inline", a=f"{correct_display}) {esc(tq.options[tq.correct_option])}"),
+        ]
+    if tq.source_name:
+        lines.append(t("quiz.source", s=esc(tq.source_name)))
+    if tq.explanation:
+        lines.append(t("quiz.explanation", text=esc(tq.explanation)))
+    return "\n".join(lines)
+
+
 def result_text(test: Test, attempt: TestAttempt, user: User | None = None, sources: list | None = None) -> str:
     """Final result: facts only (no praise)."""
     unanswered = attempt.total_questions - attempt.answered_count

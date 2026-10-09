@@ -15,14 +15,24 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.locales import t
 from app.models import AnswerReveal, QuizPoll, TestAttempt, TestQuestion
-from app.schemas.ai import LETTERS
-from app.services.attempts import displayed_options, original_to_display
 from app.utils.time import utcnow
 
 QUESTION_MAX = 300
 OPTION_MAX = 100
 EXPLANATION_MAX = 200
 MAX_OPTIONS = 10
+
+
+def tg_len(text: str) -> int:
+    """Length as Telegram counts it (UTF-16 code units): an emoji such as 📚 counts as 2."""
+    return len(text.encode("utf-16-le")) // 2
+
+
+def _cut(text: str, limit: int) -> str:
+    """Shorten to ``limit`` Telegram characters, ending with "…"."""
+    while text and tg_len(text) > limit - 1:
+        text = text[:-1]
+    return text.rstrip() + "…"
 
 
 @dataclass
@@ -44,26 +54,49 @@ def _explanation(tq: TestQuestion) -> tuple[str | None, bool]:
     if not parts:
         return None, False
     text = "\n".join(parts)
-    if len(text) <= EXPLANATION_MAX:
+    if tg_len(text) <= EXPLANATION_MAX:
         return text, False
-    return text[: EXPLANATION_MAX - 1].rstrip() + "…", True
+    return _cut(text, EXPLANATION_MAX), True
 
 
 def build(attempt: TestAttempt, tq: TestQuestion, item: dict, position: int, reveal: AnswerReveal) -> PollSpec | None:
-    """The poll for this question, or None when it does not fit Telegram's limits."""
-    question = f"[{position + 1}/{attempt.total_questions}] {' '.join(tq.question_text.split())}"
-    options = [" ".join(text.split()) for _, text in displayed_options(tq, item)]
-    if len(question) > QUESTION_MAX or not 2 <= len(options) <= MAX_OPTIONS:
+    """The poll for this employee's question, or None when it does not fit Telegram's limits."""
+    return build_for(tq, list(item["opts"]), position, attempt.total_questions, reveal)
+
+
+def build_for(tq: TestQuestion, opts: list[str], position: int, total: int, reveal: AnswerReveal) -> PollSpec | None:
+    """``opts`` = original option letters in the order they are shown (A, B, C...)."""
+    question = f"[{position + 1}/{total}] {' '.join(tq.question_text.split())}"
+    if not all(o in tq.options for o in opts):
         return None
-    if any(not o or len(o) > OPTION_MAX for o in options):
+    options = [" ".join(tq.options[o].split()) for o in opts]
+    if tg_len(question) > QUESTION_MAX or not 2 <= len(options) <= MAX_OPTIONS:
+        return None
+    if any(not o or tg_len(o) > OPTION_MAX for o in options):
         return None
     if reveal != AnswerReveal.IMMEDIATE:
         return PollSpec(question, options, quiz=False, correct_option_id=None, explanation=None, explanation_cut=False)
-    correct = original_to_display(item, tq.correct_option)
-    if correct is None:
+    if tq.correct_option not in opts:
         return None
     explanation, cut = _explanation(tq)
-    return PollSpec(question, options, True, LETTERS.index(correct), explanation, cut)
+    return PollSpec(question, options, True, opts.index(tq.correct_option), explanation, cut)
+
+
+def send_kwargs(spec: PollSpec) -> dict:
+    """Arguments for ``bot.send_poll`` shared by the private chat and the group."""
+    return dict(
+        question=spec.question,
+        options=spec.options,
+        type="quiz" if spec.quiz else "regular",
+        correct_option_ids=[spec.correct_option_id] if spec.correct_option_id is not None else None,
+        explanation=spec.explanation,
+        explanation_parse_mode=None,
+        question_parse_mode=None,
+        is_anonymous=False,  # answers must reach the bot to be stored per employee
+        allows_multiple_answers=False,
+        allows_revoting=False,  # the first answer is final, as with the buttons
+        shuffle_options=False,  # the order is fixed by the bot (and stored)
+    )
 
 
 async def remember(

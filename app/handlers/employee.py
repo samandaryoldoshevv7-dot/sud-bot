@@ -18,6 +18,7 @@ from app.handlers.formatting import (
     answer_result_text,
     corrections_text,
     employee_test_card,
+    poll_verdict_text,
     question_text,
     result_text,
 )
@@ -182,17 +183,7 @@ async def _send_poll(bot: Bot, chat_id: int, session: AsyncSession, attempt: Tes
     try:
         sent = await bot.send_poll(
             chat_id,
-            question=spec.question,
-            options=spec.options,
-            type="quiz" if spec.quiz else "regular",
-            correct_option_ids=[spec.correct_option_id] if spec.correct_option_id is not None else None,
-            explanation=spec.explanation,
-            explanation_parse_mode=None,
-            question_parse_mode=None,
-            is_anonymous=False,
-            allows_multiple_answers=False,
-            allows_revoting=False,  # the first answer is final, as with the buttons
-            shuffle_options=False,  # the order is this employee's own shuffled layout
+            **quiz_polls.send_kwargs(spec),
             reply_markup=kb([(t("quiz.btn.time"), EmpCB(a="time", id=attempt.id))]),
         )
     except TelegramBadRequest as exc:
@@ -340,13 +331,22 @@ async def cb_answer(callback: CallbackQuery, callback_data: AnsCB, session: Asyn
 @router.poll_answer()
 async def on_poll_answer(poll_answer: PollAnswer, session: AsyncSession, bot: Bot, user: User | None) -> None:
     """A variant was chosen in a quiz poll: same rules as a button press (final, per-user, checked
-    on the server). Telegram itself shows right/wrong and the explanation; the next question follows."""
+    on the server). Telegram shows right/wrong at once; a lasting card with the correct answer, source and
+    explanation follows, then the next question."""
     if user is None or not poll_answer.option_ids:
         return  # an answer can't be taken back: a retracted vote changes nothing
-    poll = await quiz_polls.find(session, poll_answer.poll_id)
-    if poll is None or poll_answer.option_ids[0] >= len(LETTERS):
+    if poll_answer.option_ids[0] >= len(LETTERS):
         return
-    chat_id, message_id, cut, position = poll.chat_id, poll.message_id, poll.explanation_cut, poll.position
+    poll = await quiz_polls.find(session, poll_answer.poll_id)
+    if poll is None:
+        from app.handlers.group import on_group_poll_answer
+        from app.services import group_tests
+
+        gqm = await group_tests.by_poll(session, poll_answer.poll_id)
+        if gqm is not None:  # a question posted in a group
+            await on_group_poll_answer(bot, session, poll_answer, gqm.id, LETTERS[poll_answer.option_ids[0]])
+        return
+    chat_id, message_id, position = poll.chat_id, poll.message_id, poll.position
     result = await attempt_service.submit_answer(
         session, user, poll.attempt_id, position, LETTERS[poll_answer.option_ids[0]]
     )
@@ -368,16 +368,12 @@ async def on_poll_answer(poll_answer: PollAnswer, session: AsyncSession, bot: Bo
         text, markup = await _final_result(session, test, attempt)
         await bot.send_message(chat_id, text, reply_markup=markup)
         return
-    if (
-        test.answer_reveal == AnswerReveal.IMMEDIATE
-        and cut
-        and result.question is not None
-        and result.question.explanation
-    ):
+    if test.answer_reveal == AnswerReveal.IMMEDIATE and result.question is not None:
+        # Telegram's explanation pop-up disappears after a few seconds: this card stays in the chat.
         await bot.send_message(
             chat_id,
-            t("quiz.full_explanation", n=position + 1, total=attempt.total_questions,
-              text=esc(result.question.explanation)),
+            poll_verdict_text(result.question, list(attempt.layout[position]["opts"]), position,
+                              attempt.total_questions, result.selected_display or LETTERS[poll_answer.option_ids[0]]),
         )  # fmt: skip
     if attempt.status == AttemptStatus.IN_PROGRESS:
         await send_current_question(bot, chat_id, session, attempt)
@@ -401,10 +397,10 @@ async def cb_time_left(callback: CallbackQuery, callback_data: EmpCB, session: A
 
 @router.callback_query(EmpCB.filter(F.a == "next"))
 async def cb_close_result(
-    callback: CallbackQuery, callback_data: EmpCB, session: AsyncSession, user: User | None
+    callback: CallbackQuery, callback_data: EmpCB, session: AsyncSession, bot: Bot, user: User | None
 ) -> None:
-    """✖️ CHIQISH: closes the answer window only. The attempt and the answer stay saved; the same
-    message turns into the next question (or the final result after the last one)."""
+    """➡️ Keyingi savol: the answered card stays in the chat as it is (only its button goes away);
+    the next question (or the final result after the last one) comes as a new message."""
     if user is None or not isinstance(callback.message, Message):
         await callback.answer()
         return
@@ -420,21 +416,15 @@ async def cb_close_result(
         await session.commit()
     await callback.answer()
     message = callback.message
-    if attempt.status == AttemptStatus.IN_PROGRESS:
-        view = await _question_view(session, attempt)
-        if view is not None:
-            try:
-                await message.edit_text(view[0], reply_markup=view[1])
-                await attempt_service.set_message_ref(session, attempt.id, message.chat.id, message.message_id)
-            except TelegramBadRequest:
-                sent = await message.answer(view[0], reply_markup=view[1])
-                await attempt_service.set_message_ref(session, attempt.id, message.chat.id, sent.message_id)
-            return
-    text, markup = await _final_result(session, test, attempt)
     try:
-        await message.edit_text(text, reply_markup=markup)
+        await message.edit_reply_markup(reply_markup=None)
     except TelegramBadRequest:
-        await message.answer(text, reply_markup=markup)
+        pass
+    if attempt.status == AttemptStatus.IN_PROGRESS and await attempt_service.current_question(session, attempt):
+        await send_current_question(bot, message.chat.id, session, attempt)
+        return
+    text, markup = await _final_result(session, test, attempt)
+    await message.answer(text, reply_markup=markup)
 
 
 @router.callback_query(EmpCB.filter(F.a == "res"))

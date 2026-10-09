@@ -14,7 +14,7 @@ from app.keyboards.callbacks import AdminCB, GroupAnsCB, GroupStartCB
 from app.keyboards.common import kb
 from app.locales import t
 from app.models import AnswerReveal
-from app.services import group_tests
+from app.services import background, group_tests
 from app.services import groups as group_service
 from app.services.group_tests import GroupAnswerCode
 from app.services.notifications import deep_link, notify_admins
@@ -168,21 +168,39 @@ async def member_left(event: ChatMemberUpdated, session: AsyncSession) -> None:
 
 
 @router.callback_query(GroupStartCB.filter())
-async def cb_group_start(callback: CallbackQuery, callback_data: GroupStartCB, session: AsyncSession, bot: Bot) -> None:
-    """▶️ TESTNI BOSHLASH in the group: the employee is identified ONLY by callback.from_user, gets
-    their own attempt (personal timer starts now) and the bot's private chat opens with the test."""
+async def cb_group_start(
+    callback: CallbackQuery, callback_data: GroupStartCB, session: AsyncSession, bot: Bot, session_maker
+) -> None:
+    """🤖 1. Botda ishlash / 👥 2. Guruhda ishlash. The employee is identified ONLY by
+    callback.from_user and gets their own attempt (personal timer starts now)."""
     code, attempt = await group_tests.group_start(session, callback.from_user, callback_data.p)
     if code == GroupAnswerCode.ACCEPTED and attempt is not None:
-        legacy = await group_tests.post_has_questions(session, callback_data.p)
-        if legacy:  # old post with the questions in the group itself
-            text = t("gt.alert.started", done=attempt.answered_count, total=attempt.total_questions)
-            await callback.answer(text, show_alert=True)
+        done, total, test_id = attempt.answered_count, attempt.total_questions, attempt.test_id
+        if callback_data.m == "g":
+            # The questions are posted into the group once and shared; each member answers for themself.
+            if await group_tests.open_in_group(session, callback_data.p):
+                background.spawn(group_tests.send_post(bot, session_maker, callback_data.p),
+                                 name=f"group-questions-{callback_data.p}")  # fmt: skip
+            await callback.answer(t("gt.alert.in_group", done=done, total=total), show_alert=True)
             return
         # Telegram opens the bot chat with /start run_<id>; the question is shown there.
-        await callback.answer(url=await deep_link(bot, f"run_{attempt.test_id}"))
+        await callback.answer(url=await deep_link(bot, f"run_{test_id}"))
         return
     duplicate = code == GroupAnswerCode.DUPLICATE
     await callback.answer(t("gt.alert.already_finished") if duplicate else t(f"gt.alert.{code.value}"), show_alert=True)
+
+
+async def on_group_poll_answer(bot: Bot, session: AsyncSession, poll_answer, gqm_id: int, letter: str) -> None:
+    """An answer to a question posted in the group as a quiz poll (called by the poll_answer handler).
+    Telegram already showed this member their own result; the full card goes to their private chat."""
+    tg_user = poll_answer.user
+    result = await group_tests.submit_group_answer(session, tg_user, gqm_id, letter)
+    if result.code != GroupAnswerCode.ACCEPTED:
+        return
+    if result.private_chat and result.reveal == AnswerReveal.IMMEDIATE and result.question is not None:
+        await _send_answer_card(bot, session, tg_user.id, result)
+    if result.finished and result.attempt is not None:
+        await _send_private_result(bot, session, tg_user.id, result)
 
 
 @router.callback_query(GroupAnsCB.filter())
