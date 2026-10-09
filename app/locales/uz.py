@@ -440,7 +440,7 @@ TEXTS: dict[str, str] = {
     "mat.already_processing": "Material hozir qayta ishlanmoqda. Agar 15 daqiqadan ko'p tursa, «🔄 Qayta ishlash» ni qayta bosing.",
     "mat.detail.processing_hint": "⏳ Fayl o'qilmoqda. Odatda bir necha daqiqa oladi; 15 daqiqadan ko'p tursa, «🔄 Qayta ishlash» tugmasi chiqadi.",
     "mat.resumed_ok": "✅ «{title}» materiali bot qayta ishga tushgani sabab to'xtab qolgan edi — qayta o'qildi va tayyor.",
-    "mat.resume_crashed": "❌ «{title}» faylini o'qish paytida bot ikki marta ishdan chiqdi — fayl server uchun juda katta bo'lishi mumkin. Material ❌ deb belgilandi. Faylni kichikroq qismlarga (masalan, 50–100 sahifadan) bo'lib yuklang.",
+    "mat.resume_crashed": "❌ «{title}» faylini o'qish paytida bot ikki marta to'xtab qoldi, shuning uchun material ❌ deb belgilandi. Bu fayl hajmiga bog'liq bo'lmasligi mumkin (masalan, server qayta ishga tushgan). 📂 Materialni ochib, 🔄 Qayta ishlash tugmasini bosing.",
     "mat.resume_failed": "❌ «{title}» materialini qayta o'qib bo'lmadi. Material sahifasida sababini ko'ring yoki faylni qayta yuklang.",
     "mat.not_ready": "Material hali tayyor emas.",
     "mat.pasted_text": "Kiritilgan matn",
@@ -470,7 +470,7 @@ TEXTS: dict[str, str] = {
     "doc_error.download_failed": "Faylni Telegramdan yuklab olib bo'lmadi. Qayta urinib ko'ring.",
     "doc_error.not_found": "Material topilmadi.",
     "doc_error.internal": "Ichki xatolik. Batafsil ma'lumot server loglarida.",
-    "doc_error.crashed": "Faylni o'qish paytida bot ishdan chiqdi (fayl server xotirasi uchun juda katta bo'lishi mumkin). Faylni kichikroq qismlarga bo'lib yuklang.",
+    "doc_error.crashed": "Faylni o'qish paytida bot ikki marta to'xtab qoldi. 🔄 Qayta ishlash tugmasini bosib, yana urinib ko'ring.",
     # ------------------------------------------------------------------ generation
     "gen.started": "🧠 «{title}» asosida {n} ta savol yaratilmoqda. Har bir savol manba bilan tekshiriladi, bu bir necha daqiqa olishi mumkin...",
     "gen.progress": "🧠 Savollar yaratilmoqda va tekshirilmoqda: {done}/{total}",
@@ -862,6 +862,16 @@ TEXTS: dict[str, str] = {
     "groups.delete_confirm": "🗑 «{title}» guruhi ro'yxatdan o'chirilsinmi?",
     # ------------------------------------------------------------------ settings
     "settings.title": "⚙️ <b>SOZLAMALAR</b>",
+    "settings.emb_off": "⚠️ Aqlli qidiruv o'chirilgan: oldin u server xotirasiga sig'madi va botni to'xtatib qo'ydi. Materiallar oddiy matn qidiruvi bilan ishlaydi.",
+    "settings.btn.emb_on": "🧠 Aqlli qidiruvni qayta yoqish",
+    "settings.emb_on_ok": "✅ Aqlli qidiruv yoqildi.",
+    "settings.emb_on_fail": "❌ Model yuklanmadi — oddiy matn qidiruvi ishlatiladi.",
+    "emb.switched_off": (
+        "⚠️ Fayl indekslanayotganda bot to'xtab qoldi — server xotirasi yetmagan bo'lishi mumkin.\n\n"
+        "Bot endi to'xtab qolmasligi uchun aqlli qidiruv (embedding) o'chirildi. Materiallar va test tuzish "
+        "ishlayveradi, qidiruv oddiy matn bo'yicha bo'ladi. Ishlanayotgan fayllar avtomatik qayta ishlanadi.\n\n"
+        "Railway'da xotira oshirilgach: ⚙️ Sozlamalar → 🧠 Aqlli qidiruvni qayta yoqish."
+    ),
     "settings.auto_approve_group_members": "👥 Guruh a'zolarini avtomatik tasdiqlash: {v}",
     "settings.auto_approve_all": "🔓 Barcha yangi xodimlarni avtomatik tasdiqlash: {v}",
     "settings.notify_employees_dm": "✉️ Yangi test haqida shaxsiy xabar yuborish: {v}",

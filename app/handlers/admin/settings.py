@@ -15,7 +15,7 @@ from app.keyboards.common import back_menu_row, cancel_kb, kb
 from app.locales import t
 from app.rag.embeddings import get_embedding_provider
 from app.rag.vector_store import detect_backend
-from app.services import settings_service
+from app.services import embedding_guard, settings_service
 from app.services.settings_service import SPECS
 
 router = Router(name="admin_settings")
@@ -51,12 +51,26 @@ async def render_settings(target, session: AsyncSession) -> None:
             mode=settings.bot_mode,
         ),
     ]
+    if await embedding_guard.is_disabled(session):
+        lines += ["", t("settings.emb_off")]
+        rows.append([(t("settings.btn.emb_on"), AdminCB(s="set_emb"))])
     await show(target, "\n".join(lines), kb(*rows, back_menu_row("menu")))
 
 
 @router.callback_query(AdminCB.filter(F.s == "set"))
 async def cb_settings(callback: CallbackQuery, session: AsyncSession, state: FSMContext) -> None:
     await state.clear()
+    await render_settings(callback, session)
+
+
+@router.callback_query(AdminCB.filter(F.s == "set_emb"))
+async def cb_embeddings_on(callback: CallbackQuery, session: AsyncSession, session_maker) -> None:
+    await callback.answer()
+    ok = await embedding_guard.switch_on(session_maker)
+    if not ok:
+        embedding_guard.switch_off()
+    assert isinstance(callback.message, Message)
+    await callback.message.answer(t("settings.emb_on_ok" if ok else "settings.emb_on_fail"))
     await render_settings(callback, session)
 
 

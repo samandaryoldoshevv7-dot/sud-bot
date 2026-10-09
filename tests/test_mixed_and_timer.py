@@ -544,7 +544,7 @@ async def test_material_that_crashes_the_bot_again_is_not_retried_forever(tg, se
         material = await session.get(Material, big_id)
         assert material.status == MaterialStatus.FAILED and material.error_message.startswith("crashed")
         assert await session.get(BotSetting, f"material_resume:{big_id}") is None
-    assert any("ikki marta ishdan chiqdi" in m.text for m in tg.session.sent_to(ADMIN))
+    assert any("ikki marta to'xtab qoldi" in m.text for m in tg.session.sent_to(ADMIN))
 
 
 class _RateLimitedLLM(ScriptedLLM):
