@@ -25,6 +25,24 @@ class SettingStates(StatesGroup):
     value = State()
 
 
+def _ai_services(settings) -> str:
+    """ "Google Gemini ✅ → Groq ⏳ 45 daq" — the order the bot uses the AI services in."""
+    from app.ai.chain import ChainProvider
+    from app.ai.factory import TITLES, get_llm_provider
+
+    if not settings.ai_providers:
+        return "—"
+    try:
+        provider = get_llm_provider(settings)
+    except Exception:
+        provider = None
+    if isinstance(provider, ChainProvider):
+        parts = [f"{title} " + (t("settings.ai_wait", m=m) if m else "✅") for title, m in provider.status()]
+    else:
+        parts = [TITLES.get(name, name) for name in settings.ai_providers]
+    return " → ".join(parts)
+
+
 async def render_settings(target, session: AsyncSession) -> None:
     values = await settings_service.get_all(session)
     settings = get_settings()
@@ -43,7 +61,7 @@ async def render_settings(target, session: AsyncSession) -> None:
         t(
             "settings.env",
             tz=settings.timezone,
-            model=settings.groq_model,
+            model=_ai_services(settings),
             ai=t("common.on") if settings.ai_enabled else t("common.off"),
             emb=f"{embeddings.name} ({'OK' if embeddings.available else '—'})",
             backend=backend,

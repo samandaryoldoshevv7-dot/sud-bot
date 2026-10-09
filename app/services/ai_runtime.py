@@ -14,5 +14,5 @@ def ai_available() -> bool:
 
 def make_generator() -> QuestionGenerator:
     if not ai_available():
-        raise AINotConfiguredError("GROQ_API_KEY is not configured")
+        raise AINotConfiguredError("No AI API key is configured")
     return QuestionGenerator(get_llm_provider())

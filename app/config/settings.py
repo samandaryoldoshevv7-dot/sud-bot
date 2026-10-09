@@ -42,7 +42,7 @@ class Settings(BaseSettings):
     db_echo: bool = False
 
     # --- AI / LLM -----------------------------------------------------------------
-    ai_provider: Literal["groq"] = "groq"
+    ai_provider: str = "groq"  # legacy, unused: see AI_PROVIDER_ORDER
     groq_api_key: SecretStr | None = None
     groq_model: str = "openai/gpt-oss-120b"
     groq_fallback_models: str = "openai/gpt-oss-20b,qwen/qwen3-32b,llama-3.1-8b-instant"
@@ -52,6 +52,19 @@ class Settings(BaseSettings):
     groq_temperature: float = 0.3
     groq_timeout_seconds: float = 60.0
     ai_max_retries: int = 3
+    # Other AI services, each with its own official key. When one reaches its limit the bot moves
+    # on to the next one in AI_PROVIDER_ORDER (only services whose key is set take part).
+    ai_provider_order: str = "gemini,groq,cerebras,openrouter"
+    gemini_api_key: SecretStr | None = None
+    gemini_model: str = "gemini-2.5-flash"
+    gemini_fallback_models: str = "gemini-2.5-flash-lite,gemini-2.0-flash"
+    gemini_validation_model: str = "gemini-2.5-flash-lite"
+    cerebras_api_key: SecretStr | None = None
+    cerebras_model: str = "gpt-oss-120b"
+    cerebras_fallback_models: str = "llama-3.3-70b,qwen-3-32b"
+    openrouter_api_key: SecretStr | None = None
+    openrouter_model: str = "openai/gpt-oss-120b:free"
+    openrouter_fallback_models: str = "meta-llama/llama-3.3-70b-instruct:free"
     # At most this many Groq requests at the same time (bursts cause 429 rate-limit errors).
     groq_max_concurrency: int = Field(default=2, ge=1, le=10)
     # Identical deterministic AI checks (temperature 0) are answered from memory for this long.
@@ -124,8 +137,30 @@ class Settings(BaseSettings):
         return self.groq_validation_model or DEFAULT_VALIDATION_MODEL
 
     @property
-    def ai_enabled(self) -> bool:
+    def groq_enabled(self) -> bool:
         return self.groq_api_key is not None and bool(self.groq_api_key.get_secret_value())
+
+    def provider_key(self, name: str) -> str:
+        """The API key of one AI service ("" when not set)."""
+        secret = {"groq": self.groq_api_key, "gemini": self.gemini_api_key,
+                  "cerebras": self.cerebras_api_key, "openrouter": self.openrouter_api_key}.get(name)  # fmt: skip
+        return secret.get_secret_value().strip() if secret is not None else ""
+
+    @property
+    def ai_providers(self) -> list[str]:
+        """Configured AI services in the order they are tried."""
+        known = ("gemini", "groq", "cerebras", "openrouter")
+        order = [p.strip().lower() for p in self.ai_provider_order.split(",") if p.strip()]
+        order += [p for p in known if p not in order]  # a key set but missing from the order: last
+        seen: list[str] = []
+        for name in order:
+            if name in known and name not in seen and self.provider_key(name):
+                seen.append(name)
+        return seen
+
+    @property
+    def ai_enabled(self) -> bool:
+        return bool(self.ai_providers)
 
     @property
     def async_database_url(self) -> str:
@@ -138,8 +173,9 @@ class Settings(BaseSettings):
     def secret_values(self) -> list[str]:
         """Raw secret strings used by the log redaction filter."""
         values = [self.bot_token.get_secret_value()]
-        if self.groq_api_key:
-            values.append(self.groq_api_key.get_secret_value())
+        for key in (self.groq_api_key, self.gemini_api_key, self.cerebras_api_key, self.openrouter_api_key):
+            if key:
+                values.append(key.get_secret_value())
         if self.webhook_secret:
             values.append(self.webhook_secret.get_secret_value())
         password = urlsplit(self.database_url.get_secret_value()).password

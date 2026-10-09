@@ -93,8 +93,9 @@ async def startup_checks(settings: Settings) -> tuple[list[int], bool]:
         logger.error("source_chunks.embedding column missing - run `alembic upgrade head`")
     if not settings.admin_ids:
         logger.warning("ADMIN_TELEGRAM_IDS is empty: nobody can use the admin panel")
+    logger.info("AI services", extra={"order": ",".join(settings.ai_providers)})
     if not settings.ai_enabled:
-        logger.warning("GROQ_API_KEY is not set: AI question generation is disabled")
+        logger.warning("No AI API key is set: AI question generation is disabled")
     if embeddings_off:  # the model did not fit into memory before: full-text search only
         embedding_guard.switch_off()
         logger.warning("Semantic search is switched off (it crashed the bot before); full-text search is used")
