@@ -29,7 +29,7 @@ from app.locales import t
 from app.middlewares import DbSessionMiddleware, UserMiddleware
 from app.rag.embeddings import FastEmbedProvider, get_embedding_provider
 from app.rag.vector_store import detect_backend
-from app.services import background
+from app.services import background, embedding_guard
 from app.services.scheduler import scheduler_loop
 from app.services.test_builder import reset_stuck_generation
 from app.services.users import sync_admin_roles
@@ -75,13 +75,16 @@ async def set_commands(bot: Bot, settings: Settings) -> None:
             logger.info("Could not set admin commands", extra={"admin_id": admin_id, "error": str(exc)[:100]})
 
 
-async def startup_checks(settings: Settings) -> list[int]:
+async def startup_checks(settings: Settings) -> tuple[list[int], bool]:
+    """Returns (tests whose building was cut off, True if semantic search was just switched off)."""
     session_maker = get_session_maker()
     async with session_maker() as session:
         await session.execute(text("SELECT 1"))
         backend = await detect_backend(session, refresh=True)
         await sync_admin_roles(session)
         stuck = await reset_stuck_generation(session)
+        embeddings_crashed = await embedding_guard.check_after_restart(session)
+        embeddings_off = await embedding_guard.is_disabled(session)
     logger.info(
         "Database ready",
         extra={"vector_backend": backend, "reset_generation_jobs": len(stuck)},
@@ -92,11 +95,15 @@ async def startup_checks(settings: Settings) -> list[int]:
         logger.warning("ADMIN_TELEGRAM_IDS is empty: nobody can use the admin panel")
     if not settings.ai_enabled:
         logger.warning("GROQ_API_KEY is not set: AI question generation is disabled")
+    if embeddings_off:  # the model did not fit into memory before: full-text search only
+        embedding_guard.switch_off()
+        logger.warning("Semantic search is switched off (it crashed the bot before); full-text search is used")
     provider = get_embedding_provider(settings)
     if isinstance(provider, FastEmbedProvider):
-        ok = await provider.warmup()
+        async with embedding_guard.guard(session_maker, provider):
+            ok = await provider.warmup()
         logger.info("Embeddings", extra={"provider": provider.name, "model": provider.model_name, "available": ok})
-    return stuck
+    return stuck, embeddings_crashed
 
 
 def build_web_app(bot: Bot, dp: Dispatcher, settings: Settings) -> web.Application:
@@ -125,7 +132,7 @@ async def run() -> None:
     setup_logging(settings.log_level, settings.log_format, settings.secret_values())
     logger.info("Starting court training bot", extra={"version": __version__, "mode": settings.bot_mode})
 
-    interrupted_tests = await startup_checks(settings)
+    interrupted_tests, embeddings_crashed = await startup_checks(settings)
     bot = create_bot(settings)
     dp = create_dispatcher()
     me = await bot.get_me()
@@ -135,6 +142,11 @@ async def run() -> None:
         from app.handlers.admin.create_test import notify_interrupted_tests
 
         background.spawn(notify_interrupted_tests(bot, get_session_maker(), interrupted_tests), name="notify-tests")
+
+    if embeddings_crashed:
+        from app.services.notifications import notify_admins
+
+        background.spawn(notify_admins(bot, t("emb.switched_off")), name="notify-embeddings")
 
     web_app = build_web_app(bot, dp, settings)
     runner = web.AppRunner(web_app, access_log=None)

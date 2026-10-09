@@ -17,6 +17,7 @@ from app.documents.extractors import extract_plain_text
 from app.models import FileType, Material, MaterialStatus, News, Question, QuestionStatus, SourceChunk
 from app.rag.embeddings import EmbeddingProvider, get_embedding_provider
 from app.rag.vector_store import store_embeddings
+from app.services import embedding_guard
 from app.utils.time import utcnow
 
 logger = logging.getLogger(__name__)
@@ -89,15 +90,18 @@ async def _embed_chunks(session: AsyncSession, chunks: list[SourceChunk], embedd
     deadline = loop.time() + EMBEDDING_TIMEOUT_SECONDS
     try:
         batch = get_settings().embedding_batch_size * 4
-        for start in range(0, len(chunks), batch):
-            part = chunks[start : start + batch]
-            remaining = deadline - loop.time()
-            if remaining <= 0:
-                raise TimeoutError
-            vectors = await asyncio.wait_for(embeddings.embed_documents([c.text for c in part]), remaining)
-            await store_embeddings(
-                session, [(c.id, v) for c, v in zip(part, vectors, strict=True)], embeddings.model_name
-            )
+        # A marker row: if the model takes all the server's memory and the bot is killed, the next
+        # start switches semantic search off instead of letting every file crash the bot again.
+        async with embedding_guard.guard(async_sessionmaker(session.bind), embeddings):
+            for start in range(0, len(chunks), batch):
+                part = chunks[start : start + batch]
+                remaining = deadline - loop.time()
+                if remaining <= 0:
+                    raise TimeoutError
+                vectors = await asyncio.wait_for(embeddings.embed_documents([c.text for c in part]), remaining)
+                await store_embeddings(
+                    session, [(c.id, v) for c, v in zip(part, vectors, strict=True)], embeddings.model_name
+                )
         return True
     except TimeoutError:
         logger.error(
