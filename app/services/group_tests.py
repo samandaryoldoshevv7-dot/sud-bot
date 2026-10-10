@@ -136,7 +136,11 @@ def render_question_final(tq: TestQuestion, gqm: GroupQuestionMessage, total: in
 
 
 def render_header(
-    test: Test, started: int | None = None, finished: bool = False, sources: list[str] | None = None
+    test: Test,
+    started: int | None = None,
+    finished: bool = False,
+    sources: list[str] | None = None,
+    in_group: bool = False,
 ) -> str:
     if finished:
         return t("gt.header_finished", title=esc(test.title), n=test.question_count, end=fmt_dt(utcnow()))
@@ -147,17 +151,20 @@ def render_header(
         text += "\n" + t("announce.sources", s=esc(" + ".join(sources)))
     if test.description:
         text += "\n\n" + esc(truncate(test.description, 500))
-    text += "\n\n" + t("gt.header_hint")
+    text += "\n\n" + t("gt.header_hint_group" if in_group else "gt.header_hint")
     if started is not None:
         text += "\n\n" + t("gt.participants", n=started)
     return text
 
 
 def header_keyboard(post: GroupTestPost) -> InlineKeyboardMarkup:
-    return kb(
-        [(t("gt.btn.in_bot"), GroupStartCB(p=post.id, m="b"))],
-        [(t("gt.btn.in_group"), GroupStartCB(p=post.id, m="g"))],
-    )
+    # Where the test opens (group or private chat) follows the admin's mode at the moment of the click.
+    return kb([(t("btn.start_test_caps"), GroupStartCB(p=post.id))])
+
+
+async def tests_in_group(session: AsyncSession) -> bool:
+    """The admin's choice: 👥 Guruhda ishlash (True) or 💬 Shaxsiy chatda ishlash (False)."""
+    return bool(await settings_service.get_value(session, "tests_in_group"))
 
 
 # ------------------------------------------------------------------------------ Telegram helpers
@@ -269,20 +276,8 @@ async def by_poll(session: AsyncSession, poll_id: str) -> GroupQuestionMessage |
 
 async def _send_question(bot: Bot, session: AsyncSession, post: GroupTestPost, test: Test, tq: TestQuestion,
                          gqm: GroupQuestionMessage, total: int):  # fmt: skip
-    """A native quiz poll (each member sees only their own result; nobody sees the others' votes
-    until the test ends) — or the classic text + buttons when the question does not fit a poll."""
-    from app.services import quiz_polls
-
-    if await settings_service.get_value(session, "quiz_polls"):
-        spec = quiz_polls.build_for(tq, list(gqm.opts), gqm.position, total, test.answer_reveal)
-        if spec is not None:
-            msg = await _call(
-                lambda: bot.send_poll(post.chat_id, **quiz_polls.send_kwargs(spec), hide_results_until_closes=True),
-                what="question-poll",
-            )
-            if msg is not None and msg.poll is not None:
-                gqm.poll_id = msg.poll.id
-                return msg
+    """A shared question message with A/B/C/D buttons. The member's own verdict is shown only to them
+    (a pop-up answer to their click); the others see no choices and no counts."""
     return await _call(
         lambda: bot.send_message(post.chat_id, render_question(tq, gqm, total), reply_markup=answer_keyboard(gqm)),
         what="question",
@@ -305,7 +300,11 @@ async def send_post(bot: Bot, session_maker: async_sessionmaker[AsyncSession], p
                 try:
                     from app.services.test_builder import source_names
 
-                    header = render_header(test, sources=await source_names(session, test.id))
+                    header = render_header(
+                        test,
+                        sources=await source_names(session, test.id),
+                        in_group=await post_has_questions(session, post.id),
+                    )
                     msg = await _call(
                         lambda: bot.send_message(post.chat_id, header, reply_markup=header_keyboard(post)),
                         what="header",
@@ -364,7 +363,8 @@ async def start_in_group(
         if group is None or not group.is_active:
             logger.error("Group for test is missing or inactive", extra={"test_id": test_id})
             return None, False
-        post = await ensure_post(session, test, group)
+        # 👥 Guruhda ishlash: the questions with their A/B/C/D buttons are posted into the group too.
+        post = await ensure_post(session, test, group, with_questions=await tests_in_group(session))
         post_id = post.id
     ok = await send_post(bot, session_maker, post_id)
     return post_id, ok
@@ -380,7 +380,8 @@ async def post_to_group_and_report(
         test = await session.get(Test, test_id)
         title = esc(test.title) if test else "?"
         group_title = esc(group.title) if group else "?"
-    key = "gt.admin_posted_ok" if ok else "gt.admin_post_failed"
+        in_group = await tests_in_group(session)
+    key = ("gt.admin_posted_ok_group" if in_group else "gt.admin_posted_ok") if ok else "gt.admin_post_failed"
     try:
         await bot.send_message(admin_chat_id, t(key, title=title, group=group_title))
     except Exception as exc:

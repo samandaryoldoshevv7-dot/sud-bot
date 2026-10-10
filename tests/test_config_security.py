@@ -108,7 +108,8 @@ def test_dynamic_translation_keys_exist():
     keys += [f"test_status.{s.value}" for s in TestStatus]
     keys += [f"user_status.{s.value}" for s in UserStatus]
     keys += [f"emp.start_error.{e.value}" for e in StartError]
-    keys += [f"settings.{k}" for k in SPECS] + [f"settings.btn.{k}" for k in SPECS]
+    shown = [k for k, spec in SPECS.items() if spec.visible]  # hidden ones are changed elsewhere
+    keys += [f"settings.{k}" for k in shown] + [f"settings.btn.{k}" for k in shown]
     keys += [f"difficulty.{d}" for d in ("easy", "medium", "hard", "mixed")]
     keys += [f"reveal.{r}" for r in ("immediate", "after", "never")]
     keys += [f"rank.period.{p}" for p in ("day", "week", "month", "all")]

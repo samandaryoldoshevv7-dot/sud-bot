@@ -51,6 +51,8 @@ async def render_settings(target, session: AsyncSession) -> None:
     lines = [t("settings.title"), ""]
     rows = []
     for key, spec in SPECS.items():
+        if not spec.visible:
+            continue
         value = values[key]
         shown = (t("common.on") if value else t("common.off")) if spec.kind == "bool" else str(value)
         lines.append(t(f"settings.{key}", v=shown))

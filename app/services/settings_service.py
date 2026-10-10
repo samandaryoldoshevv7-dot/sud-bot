@@ -18,6 +18,7 @@ class SettingSpec:
     kind: str  # bool | int
     min_value: int | None = None
     max_value: int | None = None
+    visible: bool = True  # False: not listed in ⚙️ Sozlamalar (changed elsewhere, e.g. the admin menu)
 
 
 SPECS: dict[str, SettingSpec] = {
@@ -32,6 +33,8 @@ SPECS: dict[str, SettingSpec] = {
         SettingSpec("weak_topic_min_answers", 3, "int", 1, 50),
         SettingSpec("auto_generate_questions", 20, "int", 0, 50),
         SettingSpec("quiz_polls", True, "bool"),  # questions as native Telegram quiz polls
+        # Where employees take tests: False = the bot's private chat, True = inside the Telegram group.
+        SettingSpec("tests_in_group", False, "bool", visible=False),
     ]
 }
 
