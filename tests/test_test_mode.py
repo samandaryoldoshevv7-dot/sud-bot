@@ -171,3 +171,59 @@ async def _correct(session, gqm) -> str:
 
     tq = await session.get(TestQuestion, gqm.test_question_id)
     return "ABCD"[gqm.opts.index(tq.correct_option)]
+
+
+async def _all_audience_test(session_maker):
+    """A test made with ➕ Test yaratish for everybody (not tied to one group), plus a registered group."""
+    async with session_maker() as session:
+        admin = await make_employee(session, ADMIN, "Admin Bosh")
+        await group_service.register_group(session, GROUP_CHAT, "Sud xodimlari", admin)
+        test = await _two_source_test(session_maker, session)
+        return test.id
+
+
+async def test_new_test_in_group_mode_is_posted_into_the_group_not_announced(tg, session_maker):  # noqa: F811
+    """The reported case: in 👥 Guruhda ishlash the new test came as an announcement whose button
+    opened the bot's private chat."""
+    from app.services.scheduler import launch_test
+
+    await _set_mode(session_maker, True)
+    await tg(message_update(7801, "/start", "Ali"))  # an employee with the bot opened privately
+    test_id = await _all_audience_test(session_maker)
+    tg.session.clear()
+    await launch_test(tg.bot, session_maker, test_id)
+    sent = tg.session.sent_to(GROUP_CHAT)
+    assert len(sent) == 1 + 4  # header + the questions with A/B/C/D buttons
+    assert _buttons(sent[0].reply_markup) == ["▶️ TESTNI BOSHLASH"]
+    assert all(_buttons(m.reply_markup) == ["A", "B", "C", "D"] for m in sent[1:])
+    assert not any(b.url for m in sent for row in m.reply_markup.inline_keyboard for b in row)  # no bot link
+    dm = tg.session.sent_to(7801)
+    assert dm and "Bu test guruhda ishlanadi" in dm[-1].text and dm[-1].reply_markup is None
+
+
+async def test_new_test_in_private_mode_is_announced_as_before(tg, session_maker):  # noqa: F811
+    from app.services.scheduler import launch_test
+
+    await _set_mode(session_maker, False)
+    await tg(message_update(7802, "/start", "Ali"))
+    test_id = await _all_audience_test(session_maker)
+    tg.session.clear()
+    await launch_test(tg.bot, session_maker, test_id)
+    sent = tg.session.sent_to(GROUP_CHAT)
+    assert len(sent) == 1 and "YANGI TEST" in sent[0].text
+    assert sent[0].reply_markup.inline_keyboard[0][0].url.endswith(f"start=test_{test_id}")
+    assert _buttons(tg.session.sent_to(7802)[-1].reply_markup) == ["▶️ TESTNI BOSHLASH"]
+
+
+async def test_reminder_in_group_mode_does_not_open_the_private_chat(tg, session_maker):  # noqa: F811
+    from app.models import Test
+    from app.services.notifications import remind_unfinished
+
+    await _set_mode(session_maker, True)
+    await tg(message_update(7803, "/start", "Ali"))
+    test_id = await _all_audience_test(session_maker)
+    tg.session.clear()
+    async with session_maker() as session:
+        await remind_unfinished(tg.bot, session, await session.get(Test, test_id))
+    dm = tg.session.sent_to(7803)
+    assert dm and "Bu test guruhda ishlanadi" in dm[-1].text and dm[-1].reply_markup is None
