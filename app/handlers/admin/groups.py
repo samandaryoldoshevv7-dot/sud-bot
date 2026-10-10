@@ -152,11 +152,25 @@ async def cb_announce_choose(callback: CallbackQuery, callback_data: AdminCB, se
 
 
 @router.callback_query(AdminCB.filter(F.s == "grp_ann_t"))
-async def cb_announce(callback: CallbackQuery, callback_data: AdminCB, session: AsyncSession, bot: Bot) -> None:
+async def cb_announce(
+    callback: CallbackQuery, callback_data: AdminCB, session: AsyncSession, bot: Bot, session_maker
+) -> None:
     group = await session.get(Group, callback_data.id)
     test = await session.get(Test, int(callback_data.v or 0))
     if group is None or test is None or test.status != TestStatus.ACTIVE:
         await callback.answer(t("common.not_found"), show_alert=True)
+        return
+    from app.services import group_tests
+
+    if await group_tests.tests_in_group(session):  # 👥 Guruhda ishlash: the test itself goes into the group
+        await callback.answer()
+        await group_tests.post_to_group_and_report(
+            bot,
+            session_maker,
+            test.id,
+            group.id,
+            callback.message.chat.id if callback.message else callback.from_user.id,
+        )
         return
     link = await deep_link(bot, f"test_{test.id}")
     ok = await safe_send(

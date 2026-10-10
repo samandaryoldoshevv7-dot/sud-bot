@@ -38,11 +38,11 @@ class WizCB(CallbackData, prefix="w"):
 
 
 class GroupStartCB(CallbackData, prefix="gs"):
-    """Start buttons under a group test header (``p`` = group post id; ``m`` = "b" in the bot's
-    private chat, "g" in the group itself)."""
+    """▶️ TESTNI BOSHLASH under a group test header (``p`` = group post id). ``m`` is empty on new
+    headers (the admin's current mode decides); "b" / "g" on older two-button headers."""
 
     p: int
-    m: str = "b"
+    m: str = ""
 
 
 class GroupAnsCB(CallbackData, prefix="ga"):

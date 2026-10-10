@@ -71,6 +71,9 @@ TEXTS: dict[str, str] = {
         "Guruhni ulash: botni guruhga qo'shing va guruhda /register buyrug'ini yuboring."
     ),
     # ------------------------------------------------------------------ admin menu
+    "admin.menu.mode": "🧭 Testlar rejimi: <b>{m}</b>",
+    "admin.mode.set_group": "✅ Rejim: 👥 Guruhda ishlash.\n\nGuruhga yuboriladigan testlarning savollari va A/B/C/D tugmalari guruhning o'zida chiqadi. Xodimlar shaxsiy chatga o'tkazilmaydi.",
+    "admin.mode.set_private": "✅ Rejim: 💬 Shaxsiy chatda ishlash.\n\nXodimlar testni bot bilan shaxsiy chatda boshlaydi va yakunlaydi.",
     "admin.menu.title": "👨‍💼 <b>ADMIN PANEL</b>\n\nKerakli bo'limni tanlang:",
     "menu.employees": "👥 Xodimlar",
     "menu.materials": "📚 Materiallar",
@@ -84,6 +87,8 @@ TEXTS: dict[str, str] = {
     "menu.reports": "📈 Hisobotlar",
     "menu.groups": "👥 Guruhlar",
     "menu.settings": "⚙️ Sozlamalar",
+    "menu.mode_group": "👥 Guruhda ishlash",
+    "menu.mode_private": "💬 Shaxsiy chatda ishlash",
     "ai.not_configured": "⚠️ AI sozlanmagan: Railway Variables'ga GEMINI_API_KEY yoki GROQ_API_KEY (yoki CEREBRAS_API_KEY / OPENROUTER_API_KEY) qo'shing. Hozircha faqat savollar bankidagi savollardan foydalaniladi.",
     "ai.not_configured_short": "AI sozlanmagan — faqat savollar banki ishlatiladi",
     # ------------------------------------------------------------------ employee
@@ -206,17 +211,13 @@ TEXTS: dict[str, str] = {
     # ------------------------------------------------------------------ tests inside a group
     "gt.header": "📚 <b>YANGI TEST</b>\n\n<b>{title}</b>\n\n📝 {n} ta savol\n⏱ {duration}",
     "gt.header_hint": (
-        "Testni qayerda ishlashni tanlang:\n"
-        "🤖 <b>1. Botda ishlash</b> — savollar bot bilan shaxsiy chatda, faqat sizga.\n"
-        "👥 <b>2. Guruhda ishlash</b> — savollar shu guruhda viktorina ko'rinishida. Har kim o'zi javob beradi: "
-        "natijangizni faqat siz ko'rasiz, boshqalarning tanlovi test tugaguncha yashirin.\n\n"
-        "Javobni o'zgartirib bo'lmaydi; vaqt birinchi bosgan paytingizdan hisoblanadi."
+        "▶️ <b>TESTNI BOSHLASH</b> tugmasini bosing — test siz uchun alohida, bot bilan shaxsiy chatda ochiladi. "
+        "Javoblaringizni boshqalar ko'rmaydi; vaqt tugmani bosgan paytingizdan hisoblanadi."
     ),
-    "gt.btn.in_bot": "🤖 1. Botda ishlash",
-    "gt.btn.in_group": "👥 2. Guruhda ishlash",
-    "gt.alert.in_group": (
-        "👥 Savollar shu guruhda (pastda). Har bir savolga bir marta javob bering — natijangizni faqat siz "
-        "ko'rasiz. Javob berilgan: {done}/{total}."
+    "gt.header_hint_group": (
+        "👥 Test shu guruhda ishlanadi: savollar quyida. Har bir savolda A/B/C/D tugmalaridan birini bosing — "
+        "javob aynan sizga yoziladi va natijani faqat siz ko'rasiz. Javobni o'zgartirib bo'lmaydi; vaqt birinchi "
+        "bosgan paytingizdan hisoblanadi."
     ),
     "gt.header_finished": "🏁 <b>TEST YAKUNLANDI</b>\n\n📚 <b>{title}</b>\n📝 {n} ta savol\nYopildi: {end}",
     "gt.participants": "👥 Qatnashmoqda: <b>{n}</b>",
@@ -241,7 +242,8 @@ TEXTS: dict[str, str] = {
     "gt.alert.blocked": "⛔️ Sizning testda qatnashish huquqingiz o'chirilgan.",
     "gt.alert.pending": "⏳ Avval administrator sizni tasdiqlashi kerak. Botga shaxsiy /start yozing.",
     "gt.alert.invalid": "Bu tugma eskirgan.",
-    "gt.admin_posted_ok": "✅ «{title}» testi «{group}» guruhiga yuborildi. Xodimlar tanlaydi: «🤖 1. Botda ishlash» (shaxsiy chatda) yoki «👥 2. Guruhda ishlash» (guruhda viktorina, har kim o'zi uchun).",
+    "gt.admin_posted_ok": "✅ «{title}» testi «{group}» guruhiga yuborildi. Xodimlar «▶️ TESTNI BOSHLASH» ni bosadi va testni bot bilan shaxsiy chatda ishlaydi (har biri alohida).",
+    "gt.admin_posted_ok_group": "✅ «{title}» testi «{group}» guruhiga yuborildi. Savollar va A/B/C/D tugmalari guruhning o'zida — xodimlar shu yerda javob beradi (har birining javobi o'ziga yoziladi).",
     "gt.admin_post_failed": "❌ «{title}» testini «{group}» guruhiga yuborib bo'lmadi.\n\nTekshiring: bot guruhda bormi va xabar yozish huquqi bormi (botni guruhga <b>administrator</b> qiling), so'ng test sahifasida «▶️ Guruhda boshlash» ni qayta bosing.",
     "gt.admin_post_failed_auto": "❌ #{id} testini guruhga yuborib bo'lmadi. Botni guruhga administrator qiling va test sahifasida «▶️ Guruhda boshlash» ni bosing.",
     # ------------------------------------------------------------------ groups (in-group)
@@ -251,6 +253,7 @@ TEXTS: dict[str, str] = {
     "group.active_tests": "📝 <b>Guruhda faol testlar:</b>",
     "group.active_test_line": "• <b>{title}</b> — {n} ta savol, tugash: {end}",
     "group.active_tests_hint": "Savollar guruhda yuqoriroqda. Ularni ko'rmasangiz (yangi a'zolar uchun eski xabarlar yashirin bo'lishi mumkin), quyidagi tugma orqali testni bot bilan ishlang — javoblar shu testga yoziladi.",
+    "group.active_tests_hint_group": "Savollar shu guruhda yuqoriroqda — A/B/C/D tugmalari orqali javob bering. Javob aynan sizga yoziladi.",
     "group.btn.take_in_bot": "▶️ {title} — bot orqali",
     "group.welcome_new_member": "👋 Xush kelibsiz, {name}!",
     "group.btn.open_bot": "🤖 Botni ochish",

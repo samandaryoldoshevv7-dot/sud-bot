@@ -62,12 +62,22 @@ async def try_auto_approve(bot: Bot, session: AsyncSession, user: User) -> bool:
     return False
 
 
+async def _send_admin_menu(message: Message, session: AsyncSession | None) -> None:
+    if session is None:
+        await message.answer(t("admin.menu.title"), reply_markup=admin_main_kb())
+        return
+    from app.handlers.admin.menu import admin_menu_view
+
+    text, markup = await admin_menu_view(session)
+    await message.answer(text, reply_markup=markup)
+
+
 async def show_home(
     message: Message, user: User, is_admin: bool, bot: Bot | None = None, session: AsyncSession | None = None
 ) -> None:
     if is_admin:
         await message.answer(t("start.admin", name=user_line(user)), reply_markup=employee_reply_kb(is_admin=True))
-        await message.answer(t("admin.menu.title"), reply_markup=admin_main_kb())
+        await _send_admin_menu(message, session)
         return
     await message.answer(t("start.employee", name=user_line(user)), reply_markup=employee_reply_kb())
     if bot is not None and session is not None:
@@ -209,7 +219,7 @@ async def cmd_help(message: Message, is_admin: bool) -> None:
 
 
 @router.message(Command("cancel"))
-async def cmd_cancel(message: Message, state: FSMContext, is_admin: bool) -> None:
+async def cmd_cancel(message: Message, state: FSMContext, is_admin: bool, session: AsyncSession) -> None:
     current = await state.get_state()
     await state.clear()
     if current is None:
@@ -217,12 +227,12 @@ async def cmd_cancel(message: Message, state: FSMContext, is_admin: bool) -> Non
         return
     await message.answer(t("common.cancelled"))
     if is_admin:
-        await message.answer(t("admin.menu.title"), reply_markup=admin_main_kb())
+        await _send_admin_menu(message, session)
 
 
 @router.message(Command("admin"))
 @router.message(F.text == t("emp.btn.admin_panel"))
-async def cmd_admin(message: Message, state: FSMContext, is_admin: bool) -> None:
+async def cmd_admin(message: Message, state: FSMContext, is_admin: bool, session: AsyncSession) -> None:
     if not is_admin:
         logger.warning(
             "Non-admin tried /admin", extra={"telegram_id": message.from_user.id if message.from_user else None}
@@ -230,7 +240,7 @@ async def cmd_admin(message: Message, state: FSMContext, is_admin: bool) -> None
         await message.answer(t("errors.not_admin"))
         return
     await state.clear()
-    await message.answer(t("admin.menu.title"), reply_markup=admin_main_kb())
+    await _send_admin_menu(message, session)
 
 
 @fallback_router.callback_query(AdminCB.filter())

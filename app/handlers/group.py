@@ -43,24 +43,29 @@ async def cmd_register(message: Message, session: AsyncSession, bot: Bot, is_adm
 async def cmd_start_in_group(message: Message, bot: Bot, session: AsyncSession) -> None:
     tests = await group_tests.active_group_tests(session, message.chat.id)
     if tests:
-        await message.reply(await _active_tests_text(tests), reply_markup=await _active_tests_kb(bot, tests))
+        in_group = await group_tests.tests_in_group(session)
+        await message.reply(
+            await _active_tests_text(tests, in_group), reply_markup=await _active_tests_kb(bot, tests, in_group)
+        )
         return
     link = await deep_link(bot, "group")
     await message.reply(t("group.open_private"), reply_markup=kb([(t("group.btn.open_bot"), link)]))
 
 
-async def _active_tests_text(tests) -> str:
+async def _active_tests_text(tests, in_group: bool = False) -> str:
     lines = [t("group.active_tests")]
     for test in tests:
         lines.append(
             t("group.active_test_line", title=esc(test.title), n=test.question_count, end=fmt_dt(test.deadline_at))
         )
     lines.append("")
-    lines.append(t("group.active_tests_hint"))
+    lines.append(t("group.active_tests_hint_group" if in_group else "group.active_tests_hint"))
     return "\n".join(lines)
 
 
-async def _active_tests_kb(bot: Bot, tests):
+async def _active_tests_kb(bot: Bot, tests, in_group: bool = False):
+    if in_group:  # 👥 Guruhda ishlash: nobody is sent to the private chat
+        return None
     rows = []
     for test in tests[:5]:
         rows.append(
@@ -88,9 +93,10 @@ async def greet_new_member(bot: Bot, session: AsyncSession, chat_id: int, member
         return
     _greeted[key] = now
     name = esc(member.full_name or member.first_name or "")
-    text = t("group.welcome_new_member", name=name) + "\n\n" + await _active_tests_text(tests)
+    in_group = await group_tests.tests_in_group(session)
+    text = t("group.welcome_new_member", name=name) + "\n\n" + await _active_tests_text(tests, in_group)
     try:
-        await bot.send_message(chat_id, text, reply_markup=await _active_tests_kb(bot, tests))
+        await bot.send_message(chat_id, text, reply_markup=await _active_tests_kb(bot, tests, in_group))
     except Exception as exc:
         logger.warning("Could not greet new member", extra={"chat_id": chat_id, "error": str(exc)[:200]})
 
@@ -171,19 +177,22 @@ async def member_left(event: ChatMemberUpdated, session: AsyncSession) -> None:
 async def cb_group_start(
     callback: CallbackQuery, callback_data: GroupStartCB, session: AsyncSession, bot: Bot, session_maker
 ) -> None:
-    """🤖 1. Botda ishlash / 👥 2. Guruhda ishlash. The employee is identified ONLY by
-    callback.from_user and gets their own attempt (personal timer starts now)."""
+    """▶️ TESTNI BOSHLASH under a group test. The employee is identified ONLY by callback.from_user and
+    gets their own attempt (personal timer starts now); the admin's mode decides where it runs."""
     code, attempt = await group_tests.group_start(session, callback.from_user, callback_data.p)
     if code == GroupAnswerCode.ACCEPTED and attempt is not None:
         done, total, test_id = attempt.answered_count, attempt.total_questions, attempt.test_id
-        if callback_data.m == "g":
-            # The questions are posted into the group once and shared; each member answers for themself.
+        # Old headers carry their own choice ("b"/"g"); new ones follow the admin's current mode.
+        in_group = callback_data.m == "g" or (callback_data.m != "b" and await group_tests.tests_in_group(session))
+        if in_group:
+            # 👥 Guruhda ishlash: the questions and A/B/C/D buttons are in this group (posted once,
+            # shared); every answer is written to the member who pressed the button.
             if await group_tests.open_in_group(session, callback_data.p):
                 background.spawn(group_tests.send_post(bot, session_maker, callback_data.p),
                                  name=f"group-questions-{callback_data.p}")  # fmt: skip
-            await callback.answer(t("gt.alert.in_group", done=done, total=total), show_alert=True)
+            await callback.answer(t("gt.alert.started", done=done, total=total), show_alert=True)
             return
-        # Telegram opens the bot chat with /start run_<id>; the question is shown there.
+        # 💬 Shaxsiy chatda ishlash: Telegram opens the bot chat with /start run_<id>.
         await callback.answer(url=await deep_link(bot, f"run_{test_id}"))
         return
     duplicate = code == GroupAnswerCode.DUPLICATE
