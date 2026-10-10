@@ -127,16 +127,39 @@ async def announce_test(bot: Bot, session: AsyncSession, test: Test, *, groups_o
     stats = {"groups": 0, "dm": 0, "dm_failed": 0}
 
     from app.models import TestAudience
+    from app.services import group_tests
 
-    if test.audience != TestAudience.USERS and await settings_service.get_value(session, "announce_in_groups"):
+    # 👥 Guruhda ishlash: the test itself (questions + A/B/C/D buttons) goes into the group instead of an
+    # announcement whose button would open the bot's private chat.
+    in_group = await group_tests.tests_in_group(session)
+    if test.audience != TestAudience.USERS and (
+        in_group or await settings_service.get_value(session, "announce_in_groups")
+    ):
         group_stmt = select(Group).where(Group.is_active.is_(True))
         if test.group_id is not None:
             group_stmt = group_stmt.where(Group.id == test.group_id)
-        for group in (await session.execute(group_stmt)).scalars():
-            ok = await safe_send(
-                bot, group.chat_id, t("announce.group_header") + "\n\n" + body, kb([(t("btn.start_test_caps"), link)])
-            )
+        for group in list((await session.execute(group_stmt)).scalars()):
+            if in_group:
+                from app.database.session import get_session_maker
+
+                _, ok = await group_tests.start_in_group(bot, get_session_maker(), test.id, group.id)
+            else:
+                ok = await safe_send(
+                    bot, group.chat_id, t("announce.group_header") + "\n\n" + body,
+                    kb([(t("btn.start_test_caps"), link)]),
+                )  # fmt: skip
             stats["groups"] += int(bool(ok))
+    if in_group and test.audience != TestAudience.USERS and stats["groups"]:
+        # Employees are told about it, but not sent to the private chat to take it.
+        if not groups_only and await settings_service.get_value(session, "notify_employees_dm"):
+            users = await test_audience_users(session, test)
+            result = await broadcast_to_users(
+                bot, session, users, t("announce.dm_header") + "\n\n" + body + "\n\n" + t("announce.dm_in_group")
+            )
+            stats["dm"] = result.sent
+            stats["dm_failed"] = result.failed + result.blocked
+        logger.info("Test posted into groups", extra={"test_id": test.id, **stats})
+        return stats
     if not groups_only and await settings_service.get_value(session, "notify_employees_dm"):
         users = await test_audience_users(session, test)
         from app.keyboards.callbacks import EmpCB
@@ -169,11 +192,12 @@ async def remind_unfinished(bot: Bot, session: AsyncSession, test: Test) -> int:
         ).scalars()
     )
     pending = [u for u in users if u.id not in done]
-    result = await broadcast_to_users(
-        bot,
-        session,
-        pending,
-        t("reminder.body", title=esc(test.title), deadline=fmt_dt(test.deadline_at)),
-        kb([(t("btn.open_test"), EmpCB(a="card", id=test.id))]),
-    )
+    from app.models import TestAudience
+    from app.services import group_tests
+
+    text = t("reminder.body", title=esc(test.title), deadline=fmt_dt(test.deadline_at))
+    markup = kb([(t("btn.open_test"), EmpCB(a="card", id=test.id))])
+    if test.audience != TestAudience.USERS and await group_tests.tests_in_group(session):
+        text, markup = text + "\n\n" + t("announce.dm_in_group"), None  # taken in the group, not here
+    result = await broadcast_to_users(bot, session, pending, text, markup)
     return result.sent

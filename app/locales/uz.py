@@ -197,6 +197,7 @@ TEXTS: dict[str, str] = {
     "reminder.body": "⏰ <b>Eslatma!</b>\n\n«{title}» testini yakunlash muddati: <b>{deadline}</b>.\nIltimos, testni o'z vaqtida topshiring.",
     "announce.group_header": "📚 <b>YANGI TEST</b>",
     "announce.dm_header": "📚 <b>Sizga yangi test berildi</b>",
+    "announce.dm_in_group": "👥 Bu test guruhda ishlanadi: guruhdagi savollarga A/B/C/D tugmalari orqali javob bering.",
     "announce.body": "<b>{title}</b>\n\n📝 {questions} ta savol\n⏱ {duration}",
     "announce.sources": "📚 Manbalar: {s}",
     "summary.test_ended": (
