@@ -203,15 +203,14 @@ async def test_group_messages_and_callbacks_end_to_end(tg, session_maker):
     async with session_maker() as session:
         test, post, msgs = await _group_test(session_maker, session, n=3)
         test_id, post_id = test.id, post.id
-    # The bot posts the header and every question with ONLY A/B/C/D buttons.
+    # The bot posts a short header (no button) and every question as a shared Telegram poll.
     assert await group_tests.send_post(tg.bot, session_maker, post_id)
     sent = tg.session.sent_to(GROUP_CHAT)
-    assert len(sent) == 4 and "YANGI TEST" in sent[0].text  # legacy post: header + question messages
-    for msg in sent[1:]:
-        buttons = [b.text for row in msg.reply_markup.inline_keyboard for b in row]
-        assert buttons == ["A", "B", "C", "D"]
-        assert "A)" in msg.text and "D)" in msg.text  # full option texts are in the message body
-    assert "1 / 3" in sent[1].text
+    assert len(sent) == 1 and "YANGI TEST" in sent[0].text and sent[0].reply_markup is None
+    polls = tg.session.polls()
+    assert [p.question[:5] for p in polls] == ["[1/3]", "[2/3]", "[3/3]"]
+    assert all(p.is_anonymous is False and len(p.options) == 4 for p in polls)  # who chose what is visible
+    assert all(p.type == "regular" for p in polls)  # this test reveals answers only at the end
     # Re-running is idempotent (nothing is posted twice).
     tg.session.clear()
     await group_tests.send_post(tg.bot, session_maker, post_id)
@@ -265,9 +264,11 @@ async def test_group_messages_and_callbacks_end_to_end(tg, session_maker):
         await tb.expire_due(session, test.deadline_at + timedelta(seconds=1))
     tg.session.clear()
     assert await group_tests.finalize_posts(tg.bot, session_maker) == 1
+    from aiogram.methods import StopPoll
+
     texts = tg.session.texts()
-    assert any("javob ochildi" in t for t in texts) and any("TEST MUDDATI TUGADI" in t for t in texts)
-    assert not any("%" in t for t in texts if "javob ochildi" in t)  # no poll-like percentages
+    assert any("TEST MUDDATI TUGADI" in t for t in texts)
+    assert len([m for m in tg.session.requests if isinstance(m, StopPoll)]) == 3  # the polls are closed
     tg.session.clear()
     await tg(callback_update(8004, GroupAnsCB(m=msgs[1].id, o="A").pack(), "Late", chat_id=GROUP_CHAT))
     assert any("TEST MUDDATI TUGADI" in a for a in tg.session.alerts())
@@ -301,11 +302,10 @@ async def test_scheduler_starts_group_test_automatically(tg, session_maker):
         await session.commit()
     await run_tick(tg.bot, session_maker)
     sent = tg.session.sent_to(GROUP_CHAT)
-    assert len(sent) == 1 and "YANGI TEST" in sent[0].text and "TESTNI BOSHLASH" in sent[0].text
-    buttons = [b.text for row in sent[0].reply_markup.inline_keyboard for b in row]
-    assert buttons == ["▶️ TESTNI BOSHLASH"]
+    assert len(sent) == 1 and "YANGI TEST" in sent[0].text and "Savollar quyida" in sent[0].text
+    assert sent[0].reply_markup is None and len(tg.session.polls()) == 2  # the questions come right away
     await run_tick(tg.bot, session_maker)  # idempotent: nothing posted twice
-    assert len(tg.session.sent_to(GROUP_CHAT)) == 1
+    assert len(tg.session.sent_to(GROUP_CHAT)) == 1 and len(tg.session.polls()) == 2
 
 
 async def test_new_member_is_told_about_running_test(tg, session_maker):
@@ -329,12 +329,11 @@ async def test_new_member_is_told_about_running_test(tg, session_maker):
     await tg(service)
     sent = tg.session.sent_to(GROUP_CHAT)
     assert len(sent) == 1 and "Xush kelibsiz" in sent[0].text and "faol testlar" in sent[0].text
-    url = sent[0].reply_markup.inline_keyboard[0][0].url
-    assert url.endswith(f"start=test_{_test.id}")
+    assert "viktorinaga javob bering" in sent[0].text and sent[0].reply_markup is None  # no link to the bot
     # The same join arriving again (chat_member update) does not greet twice.
     await tg(service.model_copy(update={"update_id": 990002}))
     assert len(tg.session.sent_to(GROUP_CHAT)) == 1
-    # /test in the group lists running tests with bot links.
+    # /test in the group lists the running tests.
     tg.session.clear()
     from tests.telegram_mock import message_update
 
@@ -342,8 +341,9 @@ async def test_new_member_is_told_about_running_test(tg, session_maker):
     assert any("faol testlar" in t for t in tg.session.texts())
 
 
-async def test_group_test_can_be_continued_in_private_chat(tg, session_maker):
-    from app.keyboards.callbacks import AnsCB, EmpCB
+async def test_group_test_is_not_taken_in_the_private_chat(tg, session_maker):
+    """A test whose questions are in the group is answered there: the bot does not open it privately."""
+    from app.keyboards.callbacks import EmpCB
     from app.services import settings_service
 
     async with session_maker() as session:
@@ -352,76 +352,41 @@ async def test_group_test_can_be_continued_in_private_chat(tg, session_maker):
         await settings_service.set_value(session, "auto_approve_all", True)
         user = await make_employee(session, 9201, "Shaxsiy Davom")
     await group_tests.send_post(tg.bot, session_maker, post_id)
-    # Answer question 1 in the group...
     await tg(callback_update(9201, GroupAnsCB(m=first_gqm, o="A").pack(), "Shaxsiy", chat_id=GROUP_CHAT))
-    # ...then continue privately: the bot asks question 2 (the first unanswered), not question 1 again.
     tg.session.clear()
     await tg(callback_update(9201, EmpCB(a="start", id=test_id).pack(), "Shaxsiy"))
-    assert any("<b>[2/3]</b>" in t for t in tg.session.texts())
+    assert any("guruhda ishlanadi" in a for a in tg.session.alerts())
+    assert not tg.session.polls() and not any("[2/3]" in x for x in tg.session.texts())
     async with session_maker() as session:
-        attempt = (await session.execute(select(TestAttempt).where(TestAttempt.user_id == user.id))).scalar_one()
-        attempt_id = attempt.id
-        assert attempt.current_index == 1
-    # Answering question 1 again via a stale private button is rejected; question 2 is accepted.
+        answers = (await session.execute(select(UserAnswer).where(UserAnswer.user_id == user.id))).scalars().all()
+        assert [a.position for a in answers] == [0]
+    # The same question cannot be answered twice in the group either.
     tg.session.clear()
-    await tg(callback_update(9201, AnsCB(at=attempt_id, pos=0, o="B").pack(), "Shaxsiy"))
-    assert any("allaqachon" in a for a in tg.session.alerts())
-    await tg(callback_update(9201, AnsCB(at=attempt_id, pos=1, o="B").pack(), "Shaxsiy"))
-    await tg(callback_update(9201, AnsCB(at=attempt_id, pos=2, o="C").pack(), "Shaxsiy"))
-    await tg(callback_update(9201, EmpCB(a="next", id=attempt_id).pack(), "Shaxsiy"))  # ➡️ Keyingi savol
-    assert any("TEST YAKUNLANDI" in t for t in tg.session.texts())
-    async with session_maker() as session:
-        answers = (
-            (
-                await session.execute(
-                    select(UserAnswer).where(UserAnswer.user_id == user.id).order_by(UserAnswer.position)
-                )
-            )
-            .scalars()
-            .all()
-        )
-        assert [a.position for a in answers] == [0, 1, 2]
-        attempt = await session.get(TestAttempt, attempt_id)
-        assert attempt.status == AttemptStatus.COMPLETED and attempt.answered_count == 3
-    # And the group buttons now say the questions were already answered.
-    tg.session.clear()
-    await tg(callback_update(9201, GroupAnsCB(m=msgs[1].id, o="A").pack(), "Shaxsiy", chat_id=GROUP_CHAT))
+    await tg(callback_update(9201, GroupAnsCB(m=first_gqm, o="B").pack(), "Shaxsiy", chat_id=GROUP_CHAT))
     assert any("allaqachon" in a for a in tg.session.alerts())
 
 
-async def test_immediate_feedback_sends_full_explanation_privately(tg, session_maker):
-    """Group answer: short private alert + a full answer card with the complete "why" in the bot chat."""
+async def test_group_answer_sends_nothing_to_the_private_chat(tg, session_maker):
+    """Group answer: the verdict stays in the group (on the poll / in the pop-up); no card is sent
+    to the bot chat — the full explanations are in 📋 Xatolarni ko'rish after the test."""
     from app.models import TestQuestion
 
-    long_why = "Chunki qoidaning 5-bandida aniq yozilgan. " * 12  # far longer than an alert allows
+    long_why = "Chunki qoidaning 5-bandida aniq yozilgan. " * 12
     async with session_maker() as session:
         _test, post, msgs = await _group_test(session_maker, session, n=2, reveal="immediate")
         for gqm in msgs:
             tq = await session.get(TestQuestion, gqm.test_question_id)
             tq.explanation = long_why
         await make_employee(session, 8101, "Sardor Aliyev")
-        silent = await make_employee(session, 8102, "Yangi Xodim")
-        silent.has_private_chat = False  # joined the group but never opened the bot
         await session.commit()
         post_id, first = post.id, msgs[0]
         correct = await _correct_display(session, first)
         wrong = next(x for x in "ABCD" if x != correct)
     assert await group_tests.send_post(tg.bot, session_maker, post_id)
+    polls = tg.session.polls()
+    assert polls[0].type == "quiz" and polls[0].explanation and len(polls[0].explanation) <= 200
     tg.session.clear()
     await tg(callback_update(8101, GroupAnsCB(m=first.id, o=wrong).pack(), "Sardor", chat_id=GROUP_CHAT))
     alert = tg.session.alerts()[-1]
     assert alert.startswith("❌ NOTO'G'RI JAVOB") and f"To'g'ri javob: {correct}" in alert and len(alert) <= 200
-    assert "botga yuborildi" in alert
-    cards = tg.session.sent_to(8101)
-    assert len(cards) == 1
-    card = cards[0].text
-    assert "NOTO'G'RI JAVOB" in card and long_why.strip() in card and "📚 Manba:" in card
-    assert f"Sizning javobingiz:\n{wrong})" in card and f"✅ <b>TO'G'RI JAVOB:</b>\n{correct})" in card
-    assert tg.session.sent_to(GROUP_CHAT) == []  # nothing about the answer is posted in the group
-
-    # Someone who never opened the bot privately is told how to get the explanation.
-    tg.session.clear()
-    await tg(callback_update(8102, GroupAnsCB(m=first.id, o=correct).pack(), "Yangi", chat_id=GROUP_CHAT))
-    alert = tg.session.alerts()[-1]
-    assert alert.startswith("✅ TO'G'RI JAVOB!") and "/start" in alert
-    assert tg.session.sent_to(8102) == []
+    assert tg.session.sent_to(8101) == [] and tg.session.sent_to(GROUP_CHAT) == []

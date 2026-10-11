@@ -18,7 +18,6 @@ from app.handlers.formatting import (
     answer_result_text,
     corrections_text,
     employee_test_card,
-    poll_verdict_text,
     question_text,
     result_text,
 )
@@ -52,6 +51,7 @@ START_ERRORS = {
     StartError.NO_QUESTIONS: "emp.start_error.no_questions",
     StartError.PAUSED: "emp.start_error.paused",
     StartError.NOT_ASSIGNED: "emp.start_error.not_assigned",
+    StartError.IN_GROUP: "emp.start_error.in_group",
 }
 MY_TESTS_TEXTS = {t("emp.btn.my_tests"), t("emp.btn.my_tests_old")}
 
@@ -181,6 +181,8 @@ async def _send_poll(bot: Bot, chat_id: int, session: AsyncSession, attempt: Tes
         except TelegramBadRequest:
             pass
     try:
+        if spec.preface:  # too long for a poll: the full question and options right above it
+            await bot.send_message(chat_id, spec.preface)
         sent = await bot.send_poll(
             chat_id,
             **quiz_polls.send_kwargs(spec),
@@ -225,6 +227,10 @@ async def open_test_in_private(
 
     Returns ``(error, resumed)``. Used by ▶️ TESTNI BOSHLASH in the private chat and by the deep link
     the group button opens."""
+    from app.services import group_tests
+
+    if await group_tests.runs_in_group(session, test_id):  # answered in the group, never here
+        return StartError.IN_GROUP, False
     result = await attempt_service.start_attempt(session, user, test_id, chat_id=chat_id)
     if result.error is not None:
         return result.error, False
@@ -331,8 +337,8 @@ async def cb_answer(callback: CallbackQuery, callback_data: AnsCB, session: Asyn
 @router.poll_answer()
 async def on_poll_answer(poll_answer: PollAnswer, session: AsyncSession, bot: Bot, user: User | None) -> None:
     """A variant was chosen in a quiz poll: same rules as a button press (final, per-user, checked
-    on the server). Telegram shows right/wrong at once; a lasting card with the correct answer, source and
-    explanation follows, then the next question."""
+    on the server). Telegram itself marks right/wrong on the poll and shows the explanation; the next
+    question follows. The full explanations are in 📋 Xatolarni ko'rish after the test."""
     if user is None or not poll_answer.option_ids:
         return  # an answer can't be taken back: a retracted vote changes nothing
     if poll_answer.option_ids[0] >= len(LETTERS):
@@ -368,13 +374,6 @@ async def on_poll_answer(poll_answer: PollAnswer, session: AsyncSession, bot: Bo
         text, markup = await _final_result(session, test, attempt)
         await bot.send_message(chat_id, text, reply_markup=markup)
         return
-    if test.answer_reveal == AnswerReveal.IMMEDIATE and result.question is not None:
-        # Telegram's explanation pop-up disappears after a few seconds: this card stays in the chat.
-        await bot.send_message(
-            chat_id,
-            poll_verdict_text(result.question, list(attempt.layout[position]["opts"]), position,
-                              attempt.total_questions, result.selected_display or LETTERS[poll_answer.option_ids[0]]),
-        )  # fmt: skip
     if attempt.status == AttemptStatus.IN_PROGRESS:
         await send_current_question(bot, chat_id, session, attempt)
         return

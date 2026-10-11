@@ -210,7 +210,7 @@ async def test_three_users_answer_the_same_question_at_once(session_maker):
 # ------------------------------------------------------------------------------ GROUP
 
 
-async def test_group_start_identifies_user_and_opens_private_session(tg, session_maker):  # noqa: F811
+async def test_group_start_identifies_user_and_keeps_the_test_in_the_group(tg, session_maker):  # noqa: F811
     async with session_maker() as session:
         admin = await make_employee(session, ADMIN, "Admin Bosh")
         group, _ = await group_service.register_group(session, GROUP_CHAT, "Sud xodimlari", admin)
@@ -221,22 +221,27 @@ async def test_group_start_identifies_user_and_opens_private_session(tg, session
     header = tg.session.sent_to(GROUP_CHAT)
     assert len(header) == 1 and "📚 <b>YANGI TEST</b>" in header[0].text and "📝 4 ta savol" in header[0].text
     assert "⏱ 24 soat" in header[0].text
-    # Ali and Vali press ▶️ TESTNI BOSHLASH at the same time: each gets their own attempt.
+    # Ali and Vali press ▶️ TESTNI BOSHLASH on an older header at the same time: each gets their own
+    # attempt, nobody is sent to the private chat, and the questions are posted into the group once.
     tg.session.clear()
     await asyncio.gather(
         tg(callback_update(7201, GroupStartCB(p=post_id).pack(), "Ali", chat_id=GROUP_CHAT)),
         tg(callback_update(7202, GroupStartCB(p=post_id).pack(), "Vali", chat_id=GROUP_CHAT)),
     )
-    urls = [m.url for m in tg.session.requests if isinstance(m, AnswerCallbackQuery)]
-    assert urls and all(u and u.endswith(f"start=run_{test_id}") for u in urls)
+    from tests.test_quiz_polls import _wait_background
+
+    await _wait_background()
+    calls = [m for m in tg.session.requests if isinstance(m, AnswerCallbackQuery)]
+    assert len(calls) == 2 and all(c.url is None and "Test boshlandi" in (c.text or "") for c in calls)
+    assert len(tg.session.polls()) == 4
     async with session_maker() as session:
         attempts = (await session.execute(select(TestAttempt).where(TestAttempt.test_id == test_id))).scalars().all()
         assert sorted(a.user_id for a in attempts) and len(attempts) == 2
-    # The deep link opens the private chat and shows Ali's first question there (not in the group).
+    # An old link to the bot does not open it privately either.
     tg.session.clear()
     await tg(message_update(7201, f"/start run_{test_id}", "Ali"))
-    assert any("<b>[1/4]</b>" in x for x in (m.text for m in tg.session.sent_to(7201)))
-    assert tg.session.sent_to(GROUP_CHAT) == []
+    assert any("guruhda ishlanadi" in m.text for m in tg.session.sent_to(7201))
+    assert not tg.session.polls()
 
 
 # ------------------------------------------------------------------------------ ADMIN: 4 files → mixed test

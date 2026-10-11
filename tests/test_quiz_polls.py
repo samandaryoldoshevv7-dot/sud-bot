@@ -62,13 +62,8 @@ async def test_questions_come_as_quiz_polls_and_answers_are_final(tg, session_ma
         await tg(poll_answer_update(7101, poll_id, []))  # a retracted vote changes nothing
         assert not tg.session.requests
         await tg(poll_answer_update(7101, poll_id, [choice]))
-        # A lasting card (Telegram's own pop-up disappears): verdict, correct answer, source.
-        card = next(x for x in tg.session.texts() if x.startswith(f"<b>[{pos + 1}/4]</b> "))
-        if pos == 0:
-            assert "❌ <b>NOTO'G'RI JAVOB</b>" in card and f"Sizning javobingiz: {LETTERS[choice]})" in card
-            assert f"✅ To'g'ri javob: {LETTERS[correct]})" in card and "📚 Manba: " in card
-        else:
-            assert "✅ <b>TO'G'RI JAVOB</b>" in card and "Sizning javobingiz" not in card
+        # Telegram marks right/wrong on the poll itself; the bot sends no extra card.
+        assert not any(x.startswith(f"<b>[{pos + 1}/4]</b>") for x in tg.session.texts())
         if pos < 3:
             current = tg.session.polls()[-1]
             assert current.question.startswith(f"[{pos + 2}/4] ")
@@ -138,22 +133,28 @@ async def test_answers_revealed_later_use_a_plain_poll_without_revoting(tg, sess
     assert tg.session.polls()[-1].question.startswith("[2/4] ")
 
 
-async def test_question_too_long_for_a_poll_is_shown_as_text(tg, session_maker):  # noqa: F811
+async def test_question_too_long_is_still_a_poll_with_the_full_text_above(tg, session_maker):  # noqa: F811
     async with session_maker() as session:
         test = await _two_source_test(session_maker, session)
         rows = (await session.execute(select(TestQuestion).where(TestQuestion.test_id == test.id))).scalars().all()
-        for tq in rows:  # an option longer than Telegram's 100 characters
-            tq.options = {**tq.options, "A": "Juda uzun variant matni " * 6}
+        long_option = "Juda uzun variant matni " * 6  # longer than Telegram's 100 characters
+        for tq in rows:
+            tq.options = {**tq.options, "A": long_option}
         await session.commit()
         test_id = test.id
     await tg(message_update(7106, "/start", "Ali"))
     tg.session.clear()
     await tg(callback_update(7106, EmpCB(a="start", id=test_id).pack(), "Ali"))
-    assert not tg.session.polls()
-    assert any("<b>[1/4]</b>" in x and "○ <b>A)</b>" in x for x in tg.session.texts())
+    poll = tg.session.polls()[-1]
+    assert poll.question.startswith("[1/4]") and "yuqoridagi xabarda" in poll.question
+    assert [o[:3] for o in poll.options] == ["A) ", "B) ", "C) ", "D) "]
+    assert all(len(o.encode("utf-16-le")) // 2 <= 100 for o in poll.options)
+    preface = next(x for x in tg.session.texts() if x.startswith("<b>[1/4]</b>"))
+    assert long_option.strip() in preface  # the full text, nothing cut
+    assert not any("○ <b>A)</b>" in x for x in tg.session.texts())  # not the old text look
 
 
-async def test_long_explanation_stays_in_full_in_the_answer_card(tg, session_maker):  # noqa: F811
+async def test_long_explanation_is_cut_on_the_poll_and_no_card_is_sent(tg, session_maker):  # noqa: F811
     async with session_maker() as session:
         test = await _two_source_test(session_maker, session)
         rows = (await session.execute(select(TestQuestion).where(TestQuestion.test_id == test.id))).scalars().all()
@@ -170,8 +171,7 @@ async def test_long_explanation_stays_in_full_in_the_answer_card(tg, session_mak
         attempt_id = (await session.execute(select(TestAttempt.id).where(TestAttempt.test_id == test_id))).scalar_one()
     tg.session.clear()
     await tg(poll_answer_update(7107, poll_id_of(poll), [await _correct_index(session_maker, attempt_id, 0)]))
-    card = [x for x in tg.session.texts() if "💡 Izoh:" in x]
-    assert card and card[0].count("batafsil belgilaydi") == 5  # the whole explanation, not the cut one
+    assert not any("💡 Izoh:" in x for x in tg.session.texts())  # full explanations: 📋 Xatolarni ko'rish
 
 
 def test_classic_mode_is_still_available(monkeypatch):

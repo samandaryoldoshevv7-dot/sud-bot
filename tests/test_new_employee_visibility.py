@@ -82,7 +82,7 @@ async def test_admin_approval_sends_running_tests(tg, session_maker):  # noqa: F
         assert (await session.get(DbUser, pending_id)).status == UserStatus.ACTIVE
 
 
-async def test_new_group_member_is_told_about_private_chat_tests(tg, session_maker):  # noqa: F811
+async def test_new_group_member_is_told_about_running_tests(tg, session_maker):  # noqa: F811
     async with session_maker() as session:
         await _group(session)
         test = await _active_test(session_maker, session, title="Shaxsiy chat testi")  # announced privately
@@ -99,7 +99,7 @@ async def test_new_group_member_is_told_about_private_chat_tests(tg, session_mak
     )  # fmt: skip
     sent = tg.session.sent_to(GROUP_CHAT)
     assert len(sent) == 1 and "Shaxsiy chat testi" in sent[0].text
-    assert sent[0].reply_markup.inline_keyboard[0][0].url.endswith(f"start=test_{test.id}")
+    assert sent[0].reply_markup is None  # tests are taken in the group: no link to the bot
     async with session_maker() as session:
         user = (await session.execute(select(DbUser).where(DbUser.telegram_id == 9305))).scalar_one()
         assert user.id

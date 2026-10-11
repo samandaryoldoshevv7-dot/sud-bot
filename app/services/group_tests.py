@@ -163,8 +163,9 @@ def header_keyboard(post: GroupTestPost) -> InlineKeyboardMarkup:
 
 
 async def tests_in_group(session: AsyncSession) -> bool:
-    """The admin's choice: 👥 Guruhda ishlash (True) or 💬 Shaxsiy chatda ishlash (False)."""
-    return bool(await settings_service.get_value(session, "tests_in_group"))
+    """Tests for everybody or for a group are always taken inside the Telegram group (as quiz
+    polls); only tests for selected employees go to the bot's private chat."""
+    return True
 
 
 # ------------------------------------------------------------------------------ Telegram helpers
@@ -268,6 +269,19 @@ async def open_in_group(session: AsyncSession, post_id: int) -> bool:
     return True
 
 
+async def runs_in_group(session: AsyncSession, test_id: int) -> bool:
+    """True when the test's questions were posted into a group (it is taken there, not privately)."""
+    row = (
+        await session.execute(
+            select(GroupQuestionMessage.id)
+            .join(GroupTestPost, GroupTestPost.id == GroupQuestionMessage.post_id)
+            .where(GroupTestPost.test_id == test_id)
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    return row is not None
+
+
 async def by_poll(session: AsyncSession, poll_id: str) -> GroupQuestionMessage | None:
     return (
         await session.execute(select(GroupQuestionMessage).where(GroupQuestionMessage.poll_id == poll_id))
@@ -276,8 +290,20 @@ async def by_poll(session: AsyncSession, poll_id: str) -> GroupQuestionMessage |
 
 async def _send_question(bot: Bot, session: AsyncSession, post: GroupTestPost, test: Test, tq: TestQuestion,
                          gqm: GroupQuestionMessage, total: int):  # fmt: skip
-    """A shared question message with A/B/C/D buttons. The member's own verdict is shown only to them
-    (a pop-up answer to their click); the others see no choices and no counts."""
+    """A shared Telegram quiz poll. Non-anonymous: each answer is stored for the member who chose it,
+    and after answering a member sees how the others answered (who chose what). Before answering
+    nobody sees anything. A question too long for a poll gets its full text in a message above it.
+    If Telegram refuses the poll, the classic message with A/B/C/D buttons is sent instead."""
+    from app.services import quiz_polls
+
+    spec = quiz_polls.build_for(tq, list(gqm.opts), gqm.position, total, test.answer_reveal)
+    if spec is not None:
+        if spec.preface:
+            await _call(lambda: bot.send_message(post.chat_id, spec.preface), what="question-text")
+        msg = await _call(lambda: bot.send_poll(post.chat_id, **quiz_polls.send_kwargs(spec)), what="question-poll")
+        if msg is not None and msg.poll is not None:
+            gqm.poll_id = msg.poll.id
+            return msg
     return await _call(
         lambda: bot.send_message(post.chat_id, render_question(tq, gqm, total), reply_markup=answer_keyboard(gqm)),
         what="question",
@@ -300,14 +326,12 @@ async def send_post(bot: Bot, session_maker: async_sessionmaker[AsyncSession], p
                 try:
                     from app.services.test_builder import source_names
 
-                    header = render_header(
-                        test,
-                        sources=await source_names(session, test.id),
-                        in_group=await post_has_questions(session, post.id),
-                    )
+                    in_group = await post_has_questions(session, post.id)
+                    header = render_header(test, sources=await source_names(session, test.id), in_group=in_group)
+                    # The questions follow right below: the header needs no button then.
+                    markup = None if in_group else header_keyboard(post)
                     msg = await _call(
-                        lambda: bot.send_message(post.chat_id, header, reply_markup=header_keyboard(post)),
-                        what="header",
+                        lambda: bot.send_message(post.chat_id, header, reply_markup=markup), what="header"
                     )
                 except TelegramForbiddenError:
                     logger.error("Bot cannot write to the group", extra={"chat_id": post.chat_id})
@@ -610,8 +634,7 @@ async def submit_group_answer(
 def answer_alert(result: GroupAnswerResult) -> str:
     """Private popup shown only to the employee who clicked (max 200 characters).
 
-    The full explanation does not fit into an alert, so it goes to the private chat (see the group
-    handler); the alert says where to read it.
+    The full explanations are in the bot's 📋 Xatolarni ko'rish after the test.
     """
     code = result.code
     if code == GroupAnswerCode.DUPLICATE:
@@ -621,17 +644,14 @@ def answer_alert(result: GroupAnswerResult) -> str:
         return text
     if code != GroupAnswerCode.ACCEPTED:
         return t(f"gt.alert.{code.value}")
-    tail = t("gt.alert.more_in_dm") if result.private_chat else t("gt.alert.open_bot")
     if result.reveal == AnswerReveal.IMMEDIATE:
         if result.is_correct:
             text = t("gt.alert.correct", selected=result.selected)
         else:
             text = t("gt.alert.wrong", selected=result.selected, correct=result.correct)
-            room = ALERT_LIMIT - len(text) - len(tail) - 10
+            room = ALERT_LIMIT - len(text) - 10
             if result.correct_text and room > 15:
                 text += " — " + truncate(result.correct_text, room)
-        if result.explanation and not result.finished:
-            text += "\n" + tail
     else:
         text = t("gt.alert.accepted", selected=result.selected)
     if result.finished and result.attempt is not None:

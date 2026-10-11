@@ -201,13 +201,12 @@ async def cb_group_start(
 
 async def on_group_poll_answer(bot: Bot, session: AsyncSession, poll_answer, gqm_id: int, letter: str) -> None:
     """An answer to a question posted in the group as a quiz poll (called by the poll_answer handler).
-    Telegram already showed this member their own result; the full card goes to their private chat."""
+    Telegram already showed the member their result on the poll; nothing else is posted per answer."""
     tg_user = poll_answer.user
     result = await group_tests.submit_group_answer(session, tg_user, gqm_id, letter)
     if result.code != GroupAnswerCode.ACCEPTED:
         return
-    if result.private_chat and result.reveal == AnswerReveal.IMMEDIATE and result.question is not None:
-        await _send_answer_card(bot, session, tg_user.id, result)
+    # Right/wrong and the explanation are on the poll itself; the full result goes to the bot.
     if result.finished and result.attempt is not None:
         await _send_private_result(bot, session, tg_user.id, result)
 
@@ -219,28 +218,15 @@ async def cb_group_answer(callback: CallbackQuery, callback_data: GroupAnsCB, se
     await callback.answer(group_tests.answer_alert(result), show_alert=True)
     if result.code != GroupAnswerCode.ACCEPTED:
         return
-    if result.private_chat and result.reveal == AnswerReveal.IMMEDIATE and result.question is not None:
-        await _send_answer_card(bot, session, callback.from_user.id, result)
     if result.finished and result.attempt is not None:
         await _send_private_result(bot, session, callback.from_user.id, result)
-
-
-async def _send_answer_card(bot: Bot, session: AsyncSession, telegram_id: int, result) -> None:
-    """Legacy in-group questions: the full answer window is sent to the private chat."""
-    from app.handlers.formatting import answer_result_text
-    from app.services.notifications import safe_send
-
-    text = answer_result_text(
-        result.question, result.opts or [], result.position, result.total, result.selected, AnswerReveal.IMMEDIATE
-    )
-    await safe_send(bot, telegram_id, text)
 
 
 async def _send_private_result(bot: Bot, session: AsyncSession, telegram_id: int, result) -> None:
     """If the employee has opened the bot privately, send the detailed result there too."""
     from app.handlers.formatting import result_text
     from app.keyboards.callbacks import EmpCB
-    from app.models import AnswerReveal, Test, User
+    from app.models import Test, User
     from app.services.notifications import safe_send
 
     attempt = result.attempt
