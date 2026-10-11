@@ -268,7 +268,20 @@ TEXTS: dict[str, str] = {
     "ct.btn.custom": "✍️ Maxsus son",
     "ct.ask_count": "🔀 <b>Aralash test</b>\n\n{sources}\n\nNechta savol tuzilsin?",
     "ct.ask_custom_count": "Savollar sonini yuboring (1–100):",
-    "ct.ask_duration": "⏱ <b>TEST VAQTI</b>\n\nHar bir xodim uchun vaqt «▶️ TESTNI BOSHLASH» bosilgan paytdan hisoblanadi.",
+    "ct.ask_duration": "⏱ <b>TEST VAQTI</b>\n\nHar bir xodim uchun vaqt u testni boshlagan (birinchi javob bergan) paytdan hisoblanadi.",
+    "ct.ask_variants": (
+        "🔢 <b>Nechta variant?</b>\n\nHar bir variant — alohida test ({n} ta savoldan). Variantlarning savollari "
+        "bir-birini takrorlamaydi, avvalgi testlardagi savollar ham qaytarilmaydi."
+    ),
+    "ct.confirm_variants": "🔢 Variantlar: <b>{n} ta</b> (har birida {q} ta savol, takrorlanmaydi)",
+    "ct.variant_title": "{title} — {k}-variant",
+    "ct.progress_variant": "⏳ {k}/{n}-variant: savollar tuzilmoqda {done}/{total}",
+    "ct.variants_done": "📚 <b>{title}</b> — {n} ta variant\n\n{lines}\n\n{audience}",
+    "ct.variant_ok": "✅ {k}-variant — {created} ta savol, yuborildi",
+    "ct.variant_partial": "⚠️ {k}-variant — {created}/{requested} ta savol, yuborilmadi. Sabab: {reason}",
+    "ct.btn.variant_open": "📂 {k}",
+    "ct.btn.variant_resume": "🔄 {k}-variantni davom ettirish",
+    "ct.btn.variant_send_partial": "📤 {k}-variantni {n} ta savol bilan yuborish",
     "ct.ask_audience": "👥 <b>Kimlarga berilsin?</b>",
     "ct.aud.all": "👥 Barcha xodimlarga",
     "ct.aud.group": "🏢 Guruhga",

@@ -30,6 +30,7 @@ from app.locales import t
 from app.models import (
     DURATION_CHOICES,
     AnswerReveal,
+    BotSetting,
     DeliveryMode,
     Group,
     Material,
@@ -54,6 +55,7 @@ logger = logging.getLogger(__name__)
 router = Router(name="admin_create_test")
 
 COUNTS = (10, 20, 30, 40, 50)
+VARIANT_CHOICES = (1, 2, 3, 4, 5)
 USERS_PAGE = 8
 MATERIAL_ICON = {
     MaterialStatus.UPLOADED: "⏳",
@@ -306,10 +308,33 @@ async def _set_count(target, session: AsyncSession, test_id: int, count: int) ->
     await session.commit()
     await show(
         target,
+        t("ct.ask_variants", n=count),
+        kb([(str(n), AdminCB(s="ct_vn", id=test_id, v=str(n))) for n in VARIANT_CHOICES], _cancel_row(test_id)),
+    )
+
+
+async def variant_count(session: AsyncSession, test_id: int) -> int:
+    row = await session.get(BotSetting, f"ct_variants:{test_id}")
+    try:
+        return max(1, min(int(row.value), max(VARIANT_CHOICES))) if row is not None else 1
+    except (TypeError, ValueError):
+        return 1
+
+
+@router.callback_query(AdminCB.filter(F.s == "ct_vn"))
+async def cb_variants(callback: CallbackQuery, callback_data: AdminCB, session: AsyncSession) -> None:
+    """🔢 Nechta variant: each variant is its own test; their questions never repeat."""
+    test = await _draft(callback, session, callback_data.id)
+    if test is None or not (callback_data.v or "").isdigit() or int(callback_data.v) not in VARIANT_CHOICES:
+        return
+    await session.merge(BotSetting(key=f"ct_variants:{test.id}", value=int(callback_data.v)))
+    await session.commit()
+    await show(
+        callback,
         t("ct.ask_duration"),
         kb(
-            *[[(fmt_hours(s / 3600), AdminCB(s="ct_d", id=test_id, v=str(s)))] for s in DURATION_CHOICES],
-            _cancel_row(test_id),
+            *[[(fmt_hours(s / 3600), AdminCB(s="ct_d", id=test.id, v=str(s)))] for s in DURATION_CHOICES],
+            _cancel_row(test.id),
         ),
     )
 
@@ -473,6 +498,9 @@ async def _confirm(target, session: AsyncSession, test_id: int) -> None:
         duration=fmt_hours(test.duration_seconds / 3600),
         audience=await audience_label(session, test),
     )
+    variants = await variant_count(session, test_id)
+    if variants > 1:
+        text += "\n\n" + t("ct.confirm_variants", n=variants, q=test.question_count)
     await show(target, text, kb([(t("ct.btn.create"), AdminCB(s="ct_go", id=test_id))], _cancel_row(test_id)))
 
 
@@ -510,6 +538,11 @@ async def build_and_send(
     from app.ai import usage as ai_usage
     from app.handlers.admin.materials import usage_text
 
+    async with session_maker() as session:
+        variants = await variant_count(session, test_id)
+    if variants > 1:
+        await _build_variants(session_maker, bot, test_id, variants, chat_id, message_id)
+        return
     with ai_usage.track() as spent:
         report = await build_mixed_test(session_maker, test_id, make_generator if ai_available() else None, progress)
     per_source = "\n".join(f"• {esc(name)} — {n}" for name, n in report.per_source.items())
@@ -538,6 +571,75 @@ async def build_and_send(
         await bot.edit_message_text(text, chat_id=chat_id, message_id=message_id, reply_markup=markup)
     except TelegramBadRequest:
         await bot.send_message(chat_id, text, reply_markup=markup)
+
+
+async def _build_variants(
+    session_maker: async_sessionmaker[AsyncSession],
+    bot: Bot,
+    test_id: int,
+    variants: int,
+    chat_id: int,
+    message_id: int,
+) -> None:
+    """N variants = N separate tests with the same files and settings. They are built one after the
+    other, so each takes only questions no earlier test (or variant) has used; complete ones are sent."""
+    from app.ai import usage as ai_usage
+    from app.handlers.admin.materials import usage_text
+
+    async with session_maker() as session:
+        first = await session.get(Test, test_id)
+        if first is None:
+            return
+        title = first.title
+        first.title = t("ct.variant_title", title=title, k=1)[:255]
+        # Asked once: a later 🔄 Davom ettirish finishes just that one variant.
+        await session.execute(delete(BotSetting).where(BotSetting.key == f"ct_variants:{test_id}"))
+        await session.commit()
+    ids = [test_id]
+    results: list[tuple[int, int, object]] = []
+    with ai_usage.track() as spent:
+        for k in range(1, variants + 1):
+            if k > 1:
+                async with session_maker() as session:
+                    clone = await tb.clone_test(session, test_id, t("ct.variant_title", title=title, k=k)[:255])
+                    ids.append(clone.id)
+
+            async def progress(stage: str, done: int, total: int, k: int = k) -> None:
+                try:
+                    await bot.edit_message_text(
+                        t("ct.progress_variant", k=k, n=variants, done=done, total=total),
+                        chat_id=chat_id, message_id=message_id,
+                    )  # fmt: skip
+                except TelegramBadRequest:
+                    pass
+
+            vid = ids[k - 1]
+            report = await build_mixed_test(session_maker, vid, make_generator if ai_available() else None, progress)
+            if report.created and report.missing == 0:
+                await publish_and_send(session_maker, bot, vid)
+            results.append((k, vid, report))
+    lines, rows = [], []
+    for k, vid, report in results:
+        if report.created and report.missing == 0:
+            lines.append(t("ct.variant_ok", k=k, created=report.created))
+        else:
+            reason = esc(_friendly_error(report.error or "not_enough_questions"))
+            lines.append(t("ct.variant_partial", k=k, created=report.created, requested=report.requested,
+                           reason=reason))  # fmt: skip
+            rows.append([(t("ct.btn.variant_resume", k=k), AdminCB(s="ct_resume", id=vid))])
+            if report.created:
+                rows.append([(t("ct.btn.variant_send_partial", k=k, n=report.created), AdminCB(s="ct_part", id=vid))])
+    rows.append([(t("ct.btn.variant_open", k=k), AdminCB(s="tst_v", id=vid)) for k, vid, _ in results])
+    async with session_maker() as session:
+        test = await session.get(Test, test_id)
+        label = await audience_label(session, test) if test else ""
+    text = t("ct.variants_done", title=esc(title), n=variants, lines="\n".join(lines), audience=label)
+    if spent.requests or spent.cache_hits:
+        text += "\n\n" + usage_text(spent)
+    try:
+        await bot.edit_message_text(text, chat_id=chat_id, message_id=message_id, reply_markup=kb(*rows))
+    except TelegramBadRequest:
+        await bot.send_message(chat_id, text, reply_markup=kb(*rows))
 
 
 async def publish_and_send(session_maker: async_sessionmaker[AsyncSession], bot: Bot, test_id: int) -> None:

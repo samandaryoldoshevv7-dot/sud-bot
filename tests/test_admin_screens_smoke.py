@@ -21,7 +21,7 @@ async def _data(session_maker):
         admin = await make_employee(session, ADMIN, "Admin Bosh")
         emp = await make_employee(session, 9601, "Ishchi Xodim")
         await make_employee(session, 9602, "Kutayotgan Xodim", active=False)
-        for i in range(6):
+        for i in range(10):  # three tests below, questions are not repeated between tests
             await make_question(session, text_=f"Ekran savoli {i} nimani anglatadi?", material_id=mid)
         group, _ = await group_service.register_group(session, -100777, "Sud guruhi", admin)
         await group_service.mark_membership(session, group, emp, True)

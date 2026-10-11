@@ -128,6 +128,48 @@ async def create_test(session: AsyncSession, data: TestDraftData, created_by_id:
     return test
 
 
+async def clone_test(session: AsyncSession, test_id: int, title: str) -> Test:
+    """A new draft with the same files, settings and audience (used for test variants)."""
+    from app.services import assignments
+
+    src = await session.get(Test, test_id)
+    if src is None:
+        raise TestStateError("not_found")
+    sources = list(
+        (
+            await session.execute(
+                select(TestSource).where(TestSource.test_id == test_id).order_by(TestSource.position, TestSource.id)
+            )
+        ).scalars()
+    )
+    data = TestDraftData(
+        title=title,
+        question_count=src.question_count,
+        starts_at=src.starts_at,
+        deadline_at=src.deadline_at,
+        description=src.description,
+        option_count=src.option_count,
+        difficulty=src.difficulty,
+        material_ids=[s.material_id for s in sources if s.material_id],
+        use_all_materials=src.use_all_materials,
+        news_percent=src.news_percent,
+        focus_query=src.focus_query,
+        group_id=src.group_id,
+        randomize_questions=src.randomize_questions,
+        randomize_options=src.randomize_options,
+        answer_reveal=src.answer_reveal.value,
+        passing_percent=src.passing_percent,
+        delivery_mode=src.delivery_mode,
+        duration_seconds=src.duration_seconds,
+        audience=src.audience,
+    )
+    users = await assignments.assigned_user_ids(session, test_id)
+    clone = await create_test(session, data, src.created_by_id)
+    if users:
+        await assignments.assign_users(session, clone.id, users)
+    return clone
+
+
 # ------------------------------------------------------------------------- snapshots
 
 
@@ -271,6 +313,14 @@ async def _recently_used_question_ids(session: AsyncSession, exclude_test_id: in
     return set((await session.execute(stmt)).scalars().all())
 
 
+async def questions_used_by_other_tests(session: AsyncSession, test_id: int) -> set[int]:
+    """Bank questions already in some other test (so a new test or variant never repeats them)."""
+    rows = await session.execute(
+        select(TestQuestion.question_id).where(TestQuestion.test_id != test_id, TestQuestion.question_id.is_not(None))
+    )
+    return {qid for qid in rows.scalars() if qid is not None}
+
+
 async def select_bank_questions(
     session: AsyncSession,
     test: Test,
@@ -409,6 +459,8 @@ async def _assemble(
         (await session.execute(select(TestQuestion).where(TestQuestion.test_id == test_id))).scalars().all()
     )
     used_ids = {tq.question_id for tq in existing if tq.question_id}
+    # A question already used by another test is not repeated: every new test gets fresh questions.
+    used_ids |= await questions_used_by_other_tests(session, test_id)
     # Rejected questions must never come back into this test.
     used_ids |= set(
         (await session.execute(select(Question.id).where(Question.status == QuestionStatus.REJECTED))).scalars().all()
