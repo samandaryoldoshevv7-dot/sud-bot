@@ -792,6 +792,14 @@ TEXTS: dict[str, str] = {
     "qb.section": "🗂 <b>SAVOLLAR BANKI</b>\nJami: {total} | ✅ {approved} | 🟡 {pending} | ❌ {rejected}",
     "qb.filter": "Filtr: {f}",
     "qb.found": "Topildi: <b>{n}</b>",
+    "qb.btn.delete_all": "🗑 Barchasini o'chirish ({n} ta)",
+    "qb.delete_all_confirm": (
+        "🗑 <b>{n} ta savol o'chirilsinmi?</b>\n\nFiltr: {f}\n\nRo'yxatda ko'rinayotgan hamma savollar bankdan butunlay "
+        "o'chiriladi, qaytarib bo'lmaydi. Yuborilgan testlar va ularning natijalari o'zgarmaydi. Materiallar "
+        "(fayllar) o'chmaydi — keyin ulardan yangi savollar tuzish mumkin."
+    ),
+    "qb.deleted_all": "🗑 {n} ta savol o'chirildi.",
+    "qb.nothing_to_delete": "O'chiriladigan savol yo'q.",
     "qb.btn.filters": "🔎 Filtrlar",
     "qb.btn.search": "🔍 Qidirish",
     "qb.btn.by_topic": "🏷 Mavzu",
