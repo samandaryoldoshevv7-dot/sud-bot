@@ -267,13 +267,22 @@ TEXTS: dict[str, str] = {
     "ct.btn.mix": "🔀 Aralashtirib test tuzish",
     "ct.btn.custom": "✍️ Maxsus son",
     "ct.ask_count": "🔀 <b>Aralash test</b>\n\n{sources}\n\nNechta savol tuzilsin?",
-    "ct.ask_custom_count": "Savollar sonini yuboring (1–100):",
+    "ct.ask_custom_count": "Savollar sonini yuboring (1–300):",
     "ct.ask_duration": "⏱ <b>TEST VAQTI</b>\n\nHar bir xodim uchun vaqt u testni boshlagan (birinchi javob bergan) paytdan hisoblanadi.",
     "ct.ask_variants": (
         "🔢 <b>Nechta variant?</b>\n\nHar bir variant — alohida test ({n} ta savoldan). Variantlarning savollari "
         "bir-birini takrorlamaydi, avvalgi testlardagi savollar ham qaytarilmaydi."
     ),
     "ct.confirm_variants": "🔢 Variantlar: <b>{n} ta</b> (har birida {q} ta savol, takrorlanmaydi)",
+    "ct.btn.pack": "📦 300 tagacha: {parts} ta test × {q} ta = {total} ta savol",
+    "ct.confirm_pack": (
+        "📦 <b>{n} ta test × {q} ta savol</b> (jami {total} tagacha). Avval fayllardan noyob savollar tuziladi, "
+        "keyin testlarga bo'linadi — savollar testlar orasida takrorlanmaydi. Fayllar kamroq bersa, "
+        "nechta to'liq test chiqsa, shuncha tuziladi."
+    ),
+    "ct.pack_filling": "🧠 Fayllardan noyob savollar tuzilmoqda: {have}/{need}…",
+    "ct.pack_exhausted": "fayllarda boshqa noyob savol qolmadi",
+    "ct.pack_short": "ℹ️ Fayllardan jami <b>{available} ta</b> noyob savol chiqdi ({reason}), shuning uchun testlar soni shunga moslandi.",
     "ct.variant_title": "{title} — {k}-variant",
     "ct.progress_variant": "⏳ {k}/{n}-variant: savollar tuzilmoqda {done}/{total}",
     "ct.variants_done": "📚 <b>{title}</b> — {n} ta variant\n\n{lines}\n\n{audience}",
@@ -608,7 +617,7 @@ TEXTS: dict[str, str] = {
     "wiz.header": "📝 <b>Yangi test</b> — {n}/{total}-qadam\n\n",
     "wiz.title": "Test nomini yuboring.\nMasalan: <i>Sud amaliyoti — Oktyabr o'quvi</i>",
     "wiz.description": "Test tavsifini yuboring (ixtiyoriy):",
-    "wiz.count": "Savollar sonini tanlang yoki raqam yuboring (1–100):",
+    "wiz.count": "Savollar sonini tanlang yoki raqam yuboring (1–300):",
     "wiz.options": "Har bir savoldagi variantlar soni:",
     "wiz.difficulty": "Qiyinlik darajasi:",
     "wiz.sources": "Manba materiallarni tanlang (tanlangan: {n}):",
@@ -652,7 +661,7 @@ TEXTS: dict[str, str] = {
         "yuklangan manbalar asosida yaratiladi. So'ng ularni ko'rib chiqib tasdiqlaysiz."
     ),
     "wiz.err.title": "⚠️ Nomi 3–255 belgi bo'lishi kerak.",
-    "wiz.err.count": "⚠️ 1 dan 100 gacha raqam yuboring.",
+    "wiz.err.count": "⚠️ 1 dan 300 gacha raqam yuboring.",
     "wiz.err.percent": "⚠️ 0 dan 100 gacha raqam yuboring.",
     "wiz.err.datetime": "⚠️ Format: KK.OO.YYYY SS:DD (masalan, 07.10.2026 10:00).",
     "wiz.err.past": "⚠️ Boshlanish vaqti o'tib ketgan. Kelajakdagi vaqtni kiriting yoki «Hozir» ni tanlang.",

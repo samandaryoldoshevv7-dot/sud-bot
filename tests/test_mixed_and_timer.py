@@ -359,7 +359,8 @@ async def test_admin_creates_mixed_test_through_the_bot(tg, session_maker):  # n
     )
     await tg(callback_update(ADMIN, AdminCB(s="ct_n", id=test_id, v="8").pack()))
     variants = [b.text for row in tg.session.last_markup().inline_keyboard for b in row if b.text != "❌ Bekor qilish"]
-    assert variants == ["1", "2", "3", "4", "5"] and any("Nechta variant" in x for x in tg.session.texts())
+    assert variants[:5] == ["1", "2", "3", "4", "5"] and any("Nechta variant" in x for x in tg.session.texts())
+    assert variants[5:] == ["📦 300 tagacha: 37 ta test × 8 ta = 296 ta savol"]
     await tg(callback_update(ADMIN, AdminCB(s="ct_vn", id=test_id, v="1").pack()))
     durations = [b.text for row in tg.session.last_markup().inline_keyboard for b in row if b.text != "❌ Bekor qilish"]
     assert durations[:4] == ["6 soat", "12 soat", "24 soat", "2 kun"] and len(DURATION_CHOICES) == 4

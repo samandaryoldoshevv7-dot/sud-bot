@@ -49,6 +49,7 @@ RECENT_TESTS_TO_AVOID = 2
 # Tests without a fixed end stay open until the admin ends them; each employee still has only
 # ``duration_seconds`` from the moment they press START.
 OPEN_WINDOW = timedelta(days=365)
+MAX_TEST_QUESTIONS = 300  # one test (or one part of a 📦 split) holds at most this many questions
 
 
 class TestStateError(Exception):

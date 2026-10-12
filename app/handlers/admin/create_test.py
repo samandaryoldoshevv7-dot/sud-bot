@@ -46,7 +46,7 @@ from app.services import groups as group_service
 from app.services import materials as material_service
 from app.services import test_builder as tb
 from app.services.ai_runtime import ai_available, make_generator
-from app.services.mixed_tests import build_mixed_test
+from app.services.mixed_tests import build_mixed_test, prefill_bank
 from app.services.scheduler import launch_test
 from app.utils.text import esc, sha256_bytes, truncate
 from app.utils.time import fmt_hours, utcnow
@@ -56,6 +56,9 @@ router = Router(name="admin_create_test")
 
 COUNTS = (10, 20, 30, 40, 50)
 VARIANT_CHOICES = (1, 2, 3, 4, 5)
+# 📦 Up to this many questions in all, split into tests of the chosen size (300 → 6 × 50, 10 × 30).
+PACK_TOTAL = 300
+MAX_TEST_QUESTIONS = tb.MAX_TEST_QUESTIONS
 USERS_PAGE = 8
 MATERIAL_ICON = {
     MaterialStatus.UPLOADED: "⏳",
@@ -285,7 +288,7 @@ async def cb_custom_count(callback: CallbackQuery, callback_data: AdminCB, state
 async def on_custom_count(message: Message, state: FSMContext, session: AsyncSession) -> None:
     value = (message.text or "").strip()
     test_id = int((await state.get_data()).get("ct_test", 0))
-    if not value.isdigit() or not 1 <= int(value) <= 100:
+    if not value.isdigit() or not 1 <= int(value) <= MAX_TEST_QUESTIONS:
         await message.answer(t("wiz.err.count"))
         return
     await _set_count(message, session, test_id, int(value))
@@ -306,28 +309,45 @@ async def _set_count(target, session: AsyncSession, test_id: int, count: int) ->
         return
     test.question_count = count
     await session.commit()
-    await show(
-        target,
-        t("ct.ask_variants", n=count),
-        kb([(str(n), AdminCB(s="ct_vn", id=test_id, v=str(n))) for n in VARIANT_CHOICES], _cancel_row(test_id)),
-    )
+    rows = [[(str(n), AdminCB(s="ct_vn", id=test_id, v=str(n))) for n in VARIANT_CHOICES]]
+    parts = PACK_TOTAL // count
+    if parts >= 2:
+        rows.append(
+            [(t("ct.btn.pack", parts=parts, q=count, total=parts * count), AdminCB(s="ct_vn", id=test_id, v="max"))]
+        )
+    await show(target, t("ct.ask_variants", n=count), kb(*rows, _cancel_row(test_id)))
 
 
 async def variant_count(session: AsyncSession, test_id: int) -> int:
     row = await session.get(BotSetting, f"ct_variants:{test_id}")
     try:
-        return max(1, min(int(row.value), max(VARIANT_CHOICES))) if row is not None else 1
+        return max(1, min(int(row.value), PACK_TOTAL)) if row is not None else 1
     except (TypeError, ValueError):
         return 1
+
+
+async def is_pack(session: AsyncSession, test_id: int) -> bool:
+    """📦 mode: fill the bank with up to 300 unique questions first, then split them into tests."""
+    return await session.get(BotSetting, f"ct_pack:{test_id}") is not None
 
 
 @router.callback_query(AdminCB.filter(F.s == "ct_vn"))
 async def cb_variants(callback: CallbackQuery, callback_data: AdminCB, session: AsyncSession) -> None:
     """🔢 Nechta variant: each variant is its own test; their questions never repeat."""
     test = await _draft(callback, session, callback_data.id)
-    if test is None or not (callback_data.v or "").isdigit() or int(callback_data.v) not in VARIANT_CHOICES:
+    if test is None:
         return
-    await session.merge(BotSetting(key=f"ct_variants:{test.id}", value=int(callback_data.v)))
+    if callback_data.v == "max":
+        parts = PACK_TOTAL // max(1, test.question_count)
+        if parts < 2:
+            return
+        await session.merge(BotSetting(key=f"ct_variants:{test.id}", value=parts))
+        await session.merge(BotSetting(key=f"ct_pack:{test.id}", value=True))
+    elif (callback_data.v or "").isdigit() and int(callback_data.v) in VARIANT_CHOICES:
+        await session.merge(BotSetting(key=f"ct_variants:{test.id}", value=int(callback_data.v)))
+        await session.execute(delete(BotSetting).where(BotSetting.key == f"ct_pack:{test.id}"))
+    else:
+        return
     await session.commit()
     await show(
         callback,
@@ -499,7 +519,9 @@ async def _confirm(target, session: AsyncSession, test_id: int) -> None:
         audience=await audience_label(session, test),
     )
     variants = await variant_count(session, test_id)
-    if variants > 1:
+    if await is_pack(session, test_id):
+        text += "\n\n" + t("ct.confirm_pack", n=variants, q=test.question_count, total=variants * test.question_count)
+    elif variants > 1:
         text += "\n\n" + t("ct.confirm_variants", n=variants, q=test.question_count)
     await show(target, text, kb([(t("ct.btn.create"), AdminCB(s="ct_go", id=test_id))], _cancel_row(test_id)))
 
@@ -540,8 +562,9 @@ async def build_and_send(
 
     async with session_maker() as session:
         variants = await variant_count(session, test_id)
+        pack = await is_pack(session, test_id)
     if variants > 1:
-        await _build_variants(session_maker, bot, test_id, variants, chat_id, message_id)
+        await _build_variants(session_maker, bot, test_id, variants, chat_id, message_id, pack)
         return
     with ai_usage.track() as spent:
         report = await build_mixed_test(session_maker, test_id, make_generator if ai_available() else None, progress)
@@ -580,9 +603,13 @@ async def _build_variants(
     variants: int,
     chat_id: int,
     message_id: int,
+    pack: bool = False,
 ) -> None:
     """N variants = N separate tests with the same files and settings. They are built one after the
-    other, so each takes only questions no earlier test (or variant) has used; complete ones are sent."""
+    other, so each takes only questions no earlier test (or variant) has used; complete ones are sent.
+
+    📦 ``pack``: first up to 300 unique questions are made from the files (🧠 deep generation, never
+    padded), then split into tests of the chosen size — as many full tests as the files really give."""
     from app.ai import usage as ai_usage
     from app.handlers.admin.materials import usage_text
 
@@ -590,14 +617,36 @@ async def _build_variants(
         first = await session.get(Test, test_id)
         if first is None:
             return
-        title = first.title
+        title, size = first.title, first.question_count
         first.title = t("ct.variant_title", title=title, k=1)[:255]
         # Asked once: a later 🔄 Davom ettirish finishes just that one variant.
-        await session.execute(delete(BotSetting).where(BotSetting.key == f"ct_variants:{test_id}"))
+        await session.execute(
+            delete(BotSetting).where(BotSetting.key.in_([f"ct_variants:{test_id}", f"ct_pack:{test_id}"]))
+        )
         await session.commit()
     ids = [test_id]
     results: list[tuple[int, int, object]] = []
+    pack_note = ""
     with ai_usage.track() as spent:
+        if pack:
+
+            async def fill_progress(have: int, need: int) -> None:
+                try:
+                    await bot.edit_message_text(t("ct.pack_filling", have=min(have, need), need=need),
+                                                chat_id=chat_id, message_id=message_id)  # fmt: skip
+                except TelegramBadRequest:
+                    pass
+
+            await fill_progress(0, variants * size)
+            filled = await prefill_bank(
+                session_maker, test_id, variants * size, make_generator if ai_available() else None, fill_progress
+            )
+            full = filled.available // size
+            if full < variants:
+                # Only as many tests as there are unique questions (a part-filled last one is offered).
+                variants = max(1, full + (1 if filled.available % size else 0))
+                reason = _friendly_error(filled.error) if filled.error else t("ct.pack_exhausted")
+                pack_note = t("ct.pack_short", available=filled.available, reason=esc(reason))
         for k in range(1, variants + 1):
             if k > 1:
                 async with session_maker() as session:
@@ -618,6 +667,8 @@ async def _build_variants(
             if report.created and report.missing == 0:
                 await publish_and_send(session_maker, bot, vid)
             results.append((k, vid, report))
+            if pack and not (report.created and report.missing == 0):
+                break  # the files gave no more: no further (empty) tests
     lines, rows = [], []
     for k, vid, report in results:
         if report.created and report.missing == 0:
@@ -629,11 +680,14 @@ async def _build_variants(
             rows.append([(t("ct.btn.variant_resume", k=k), AdminCB(s="ct_resume", id=vid))])
             if report.created:
                 rows.append([(t("ct.btn.variant_send_partial", k=k, n=report.created), AdminCB(s="ct_part", id=vid))])
-    rows.append([(t("ct.btn.variant_open", k=k), AdminCB(s="tst_v", id=vid)) for k, vid, _ in results])
+    opens = [(t("ct.btn.variant_open", k=k), AdminCB(s="tst_v", id=vid)) for k, vid, _ in results]
+    rows += [opens[i : i + 5] for i in range(0, len(opens), 5)]
     async with session_maker() as session:
         test = await session.get(Test, test_id)
         label = await audience_label(session, test) if test else ""
-    text = t("ct.variants_done", title=esc(title), n=variants, lines="\n".join(lines), audience=label)
+    text = t("ct.variants_done", title=esc(title), n=len(results), lines="\n".join(lines), audience=label)
+    if pack_note:
+        text += "\n\n" + pack_note
     if spent.requests or spent.cache_hits:
         text += "\n\n" + usage_text(spent)
     try:
