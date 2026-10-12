@@ -29,7 +29,7 @@ from app.locales import t
 from app.middlewares import DbSessionMiddleware, UserMiddleware
 from app.rag.embeddings import FastEmbedProvider, get_embedding_provider
 from app.rag.vector_store import detect_backend
-from app.services import background, embedding_guard
+from app.services import background, deep_generation, embedding_guard
 from app.services.scheduler import scheduler_loop
 from app.services.test_builder import reset_stuck_generation
 from app.services.users import sync_admin_roles
@@ -75,14 +75,16 @@ async def set_commands(bot: Bot, settings: Settings) -> None:
             logger.info("Could not set admin commands", extra={"admin_id": admin_id, "error": str(exc)[:100]})
 
 
-async def startup_checks(settings: Settings) -> tuple[list[int], bool]:
-    """Returns (tests whose building was cut off, True if semantic search was just switched off)."""
+async def startup_checks(settings: Settings) -> tuple[list[int], bool, list[int]]:
+    """Returns (tests whose building was cut off, True if semantic search was just switched off,
+    materials whose 🧠 maximal question run was cut off)."""
     session_maker = get_session_maker()
     async with session_maker() as session:
         await session.execute(text("SELECT 1"))
         backend = await detect_backend(session, refresh=True)
         await sync_admin_roles(session)
         stuck = await reset_stuck_generation(session)
+        interrupted_deep = await deep_generation.mark_interrupted(session)
         embeddings_crashed = await embedding_guard.check_after_restart(session)
         embeddings_off = await embedding_guard.is_disabled(session)
     logger.info(
@@ -104,7 +106,7 @@ async def startup_checks(settings: Settings) -> tuple[list[int], bool]:
         async with embedding_guard.guard(session_maker, provider):
             ok = await provider.warmup()
         logger.info("Embeddings", extra={"provider": provider.name, "model": provider.model_name, "available": ok})
-    return stuck, embeddings_crashed
+    return stuck, embeddings_crashed, interrupted_deep
 
 
 def build_web_app(bot: Bot, dp: Dispatcher, settings: Settings) -> web.Application:
@@ -133,7 +135,7 @@ async def run() -> None:
     setup_logging(settings.log_level, settings.log_format, settings.secret_values())
     logger.info("Starting court training bot", extra={"version": __version__, "mode": settings.bot_mode})
 
-    interrupted_tests, embeddings_crashed = await startup_checks(settings)
+    interrupted_tests, embeddings_crashed, interrupted_deep = await startup_checks(settings)
     bot = create_bot(settings)
     dp = create_dispatcher()
     me = await bot.get_me()
@@ -143,6 +145,11 @@ async def run() -> None:
         from app.handlers.admin.create_test import notify_interrupted_tests
 
         background.spawn(notify_interrupted_tests(bot, get_session_maker(), interrupted_tests), name="notify-tests")
+
+    if interrupted_deep:  # 🧠 runs cut off by the restart: saved questions stay, admins can resume
+        from app.handlers.admin.materials import notify_interrupted_deep
+
+        background.spawn(notify_interrupted_deep(bot, get_session_maker(), interrupted_deep), name="notify-deep")
 
     if embeddings_crashed:
         from app.services.notifications import notify_admins

@@ -108,6 +108,8 @@ class SourceChunk(Base):
     char_count: Mapped[int] = mapped_column(Integer, nullable=False)
     embedding_model: Mapped[str | None] = mapped_column(String(255))
     generation_attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+    # Set when generating from this chunk gives no new unique question any more (material coverage).
+    gen_exhausted: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false", nullable=False)
     search_vector = mapped_column(TSVECTOR, Computed("to_tsvector('simple', text)", persisted=True), deferred=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 

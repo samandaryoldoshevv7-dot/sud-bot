@@ -28,6 +28,10 @@ class GeneratedQuestion(_Strict):
     # wrong value rejects only this question (not the whole batch).
     source: str = Field(default="", max_length=255)
     source_file: str = Field(default="", max_length=255)
+    # The one rule/fact the question tests (used by the server to find duplicates), and the article /
+    # item number as written in the source ("12-modda 2-qism"), empty when the source does not show it.
+    fact: str = Field(default="", max_length=400)
+    article: str = Field(default="", max_length=120)
 
     @field_validator("correct_answer", mode="before")
     @classmethod

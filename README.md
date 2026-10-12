@@ -151,6 +151,33 @@ Hech bir test boshqa testda ishlatilgan savolni olmaydi: bankdan faqat ishlatilm
 olinadi, yetmaganini AI materialdan yangidan tuzadi. Material «tugasa» (yangi savol tuzib bo'lmasa),
 variant to'liq bo'lmaydi va admin «🔄 Davom ettirish» / «📤 … ta savol bilan yuborish»ni tanlaydi.
 
+### 🧠 Bitta materialdan 300 tagacha noyob savol
+
+Material sahifasida **🧠 Maksimal savol yaratish (300 tagacha)** tugmasi bor. Bot materialni
+bo'lakma-bo'lak (moddalar, bandlar, muddatlar, vakolatlar, istisnolar) bir necha marta aylanib
+chiqadi va har bir yangi savolni darhol bazaga saqlaydi:
+
+- **Faqat haqiqiy son.** Material 126 ta noyob savolga yetsa — 126 ta; bo'sh joyni o'xshash savollar
+  bilan to'ldirmaydi. Javob: «Materialdan 126 ta noyob va sifatli savol yaratildi. Qo'shimcha noyob
+  savollar qolmadi.» Chegara — 300 ta.
+- **Takrorlanmaslik (serverda).** Har bir savol bilan u tekshirayotgan qoida (`fact`), modda/band
+  (`article_ref`), material, bo'lak va mavzu saqlanadi. Yangi savol barcha (boshqa materiallardagi
+  ham) savollar bilan solishtiriladi: normallashtirilgan matn xeshi, qoida xeshi, o'xshash matn
+  (rapidfuzz) + to'g'ri javob mosligi, embedding mavjud bo'lsa — ma'no yaqinligi. Bir xil
+  atamalar bo'lsa-yu, raqam (muddat, modda), organ yoki javob boshqacha bo'lsa — takror emas.
+  Bazada `text_hash` va `fact_hash` unikal indekslari va tranzaksiya darajasidagi advisory lock
+  bir vaqtda ishlayotgan ikki jarayon bir savolni ikki marta saqlashiga yo'l qo'ymaydi.
+- **Qiyinlik.** Har bir savol `medium` yoki `hard`; material bo'yicha nisbat 50/50 ga yo'naltiriladi.
+- **Format.** 4 ta variant, bitta to'g'ri javob (o'rni aralashtiriladi), qisqa izoh, manba fayli,
+  modda/mavzu. Xodimga variantlar «A) …», «B) …» ko'rinishida chiqadi.
+- **To'xtash va davom ettirish.** Jarayon `material_generation_jobs` jadvalida (o'tish, oxirgi bo'lak,
+  hisoblagichlar) saqlanadi. API limiti/xato bo'lsa — «⏸ To'xtatilgan» (bu «material tugadi»
+  degani emas); bot qayta ishga tushsa — adminlarga xabar boradi. «🔄 Savol yaratishni davom
+  ettirish» tuzilgan savollarni qayta tuzmaydi.
+- Material sahifasida: jami savollar, o'rtacha/qiyin soni, topilgan takrorlar, qamrov va qolgan
+  imkoniyat. Savollar bankida material, mavzu va qiyinlik bo'yicha filtr; «⚡ Shu materialdan test tuzish» — shu
+  materialdan tasodifiy test.
+
 ### Admin: boshqaruv va 📋 Natijalar
 
 * Test sahifasi: ⏸ **Deaktiv** / ▶️ **Aktiv**, ⏱ **Vaqtni o'zgartirish** (6/12/24 soat, 2 kun;

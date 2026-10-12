@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from sqlalchemy import (
+    BigInteger,
     CheckConstraint,
     DateTime,
     Float,
@@ -11,6 +12,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -45,6 +47,13 @@ class Question(TimestampMixin, Base):
         ),
         Index("ix_questions_status_kind", "status", "source_kind"),
         Index("ix_questions_text_hash", "text_hash", unique=True),
+        # The same legal rule is tested by at most one live question (rejected ones do not block it).
+        Index(
+            "uq_questions_fact_hash",
+            "fact_hash",
+            unique=True,
+            postgresql_where=text("fact_hash IS NOT NULL AND status <> 'rejected'"),
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -71,6 +80,13 @@ class Question(TimestampMixin, Base):
     source_reference: Mapped[str] = mapped_column(Text, nullable=False)
     source_excerpt: Mapped[str] = mapped_column(Text, nullable=False)
     text_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    # Duplicate detection: the rule/fact the question tests (one sentence from the AI, checked by
+    # the server), its normalized hash, the normalized correct answer and an optional meaning vector.
+    article_ref: Mapped[str | None] = mapped_column(String(120))  # "12-modda 2-qism" as in the source
+    fact: Mapped[str | None] = mapped_column(Text)
+    fact_hash: Mapped[str | None] = mapped_column(String(64))
+    answer_hash: Mapped[str | None] = mapped_column(String(64), index=True)
+    dedup_vec: Mapped[list[float] | None] = mapped_column(JSONB)
     validation: Mapped[dict | None] = mapped_column(JSONB)  # internal AI metadata, never shown to employees
     confidence: Mapped[float | None] = mapped_column(Float)
     version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
@@ -84,3 +100,24 @@ class Question(TimestampMixin, Base):
     @property
     def topic_name(self) -> str:
         return self.topic.name if self.topic else "—"
+
+
+class MaterialGenerationJob(TimestampMixin, Base):
+    """Checkpoint of the "up to 300 questions" run for one material: survives restarts and API
+    limits, so a resumed run continues where it stopped and never re-creates saved questions."""
+
+    __tablename__ = "material_generation_jobs"
+
+    material_id: Mapped[int] = mapped_column(ForeignKey("materials.id", ondelete="CASCADE"), primary_key=True)
+    # running | paused (API limit / errors) | interrupted (restart) | exhausted (no more unique
+    # questions in the material) | done (target reached) | failed
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="running")
+    target: Mapped[int] = mapped_column(Integer, nullable=False, default=300)
+    created: Mapped[int] = mapped_column(Integer, nullable=False, default=0)  # by this job, all runs
+    duplicates: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    rejected: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    pass_no: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    cursor: Mapped[int] = mapped_column(Integer, nullable=False, default=-1)  # last chunk_index done in the pass
+    last_error: Mapped[str | None] = mapped_column(Text)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    notify_chat_id: Mapped[int | None] = mapped_column(BigInteger)
