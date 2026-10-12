@@ -178,6 +178,14 @@ chiqadi va har bir yangi savolni darhol bazaga saqlaydi:
   imkoniyat. Savollar bankida material, mavzu va qiyinlik bo'yicha filtr; «⚡ Shu materialdan test tuzish» — shu
   materialdan tasodifiy test.
 
+**📦 300 tagacha savolni testlarga bo'lish.** Savollar sonidan keyingi «🔢 Nechta variant?» qadamida
+**📦 300 tagacha: N ta test × K ta** tugmasi bor (masalan, 50 tadan → 6 ta test, 30 tadan → 10 ta test).
+Bot avval tanlangan fayllardan 300 tagacha **noyob** savol tuzadi (🧠 chuqur tuzish, fayllar bo'yicha
+teng), keyin ularni shu o'lchamdagi alohida testlarga bo'ladi — testlar orasida savol takrorlanmaydi.
+Fayllar kamroq bersa (masalan, 130 ta), shuncha to'liq test tuziladi va yuboriladi (130 → 2 × 50),
+qolgani (30) yuborilmagan holda «📤 … ta savol bilan yuborish» / «🔄 Davom ettirish» bilan taklif
+qilinadi; bo'sh testlar yaratilmaydi. Bitta testda endi 300 tagacha savol bo'lishi mumkin.
+
 ### Admin: boshqaruv va 📋 Natijalar
 
 * Test sahifasi: ⏸ **Deaktiv** / ▶️ **Aktiv**, ⏱ **Vaqtni o'zgartirish** (6/12/24 soat, 2 kun;

@@ -40,7 +40,7 @@ class Test(TimestampMixin, Base):
     __test__ = False  # not a pytest test class
     __tablename__ = "tests"
     __table_args__ = (
-        CheckConstraint("question_count BETWEEN 1 AND 100", name="question_count_range"),
+        CheckConstraint("question_count BETWEEN 1 AND 300", name="question_count_range"),
         CheckConstraint("option_count BETWEEN 3 AND 5", name="option_count_range"),
         CheckConstraint("news_percent BETWEEN 0 AND 100", name="news_percent_range"),
         CheckConstraint("passing_percent BETWEEN 0 AND 100", name="passing_percent_range"),

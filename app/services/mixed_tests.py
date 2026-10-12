@@ -279,3 +279,88 @@ async def _build(
     await session.commit()
     report.created = len(ordered)
     report.per_source = {s.source_name: len(picked[s.id]) for s in ready}
+
+
+@dataclass
+class PrefillReport:
+    available: int = 0  # unused questions of the test's files in the bank after filling
+    created: int = 0
+    error: str | None = None  # an API limit/outage stopped the filling (the material is not used up)
+
+
+async def unused_bank_count(session: AsyncSession, test_id: int, material_id: int) -> int:
+    used = await questions_used_by_other_tests(session, test_id)
+    stmt = select(Question.id).where(
+        Question.source_material_id == material_id,
+        Question.status.in_([QuestionStatus.APPROVED, QuestionStatus.PENDING]),
+    )
+    return sum(1 for qid in (await session.execute(stmt)).scalars() if qid not in used)
+
+
+async def prefill_bank(
+    session_maker: async_sessionmaker[AsyncSession],
+    test_id: int,
+    needed: int,
+    generator_factory: GeneratorFactory | None,
+    progress: Callable[[int, int], Awaitable[None]] | None = None,
+    wait_timeout: float = 900,
+) -> PrefillReport:
+    """📦 Before a test is split into many parts: make sure the bank holds ``needed`` unused questions
+    of the test's files (shared evenly), generating the shortfall with 🧠 deep generation — unique,
+    medium/hard, never padded. Returns what is available; less when the files have no more."""
+    from app.services import deep_generation as deep
+
+    report = PrefillReport()
+    async with session_maker() as session:
+        material_ids = [
+            mid
+            for mid in (
+                await session.execute(
+                    select(TestSource.material_id).where(TestSource.test_id == test_id).order_by(TestSource.position)
+                )
+            ).scalars()
+            if mid
+        ]
+    if not material_ids:
+        report.error = "no_sources"
+        return report
+    statuses = await wait_materials_ready(session_maker, material_ids, wait_timeout)
+    ready = [m for m in material_ids if statuses.get(m) == MaterialStatus.READY]
+
+    async def available() -> dict[int, int]:
+        async with session_maker() as session:
+            return {m: await unused_bank_count(session, test_id, m) for m in ready}
+
+    have = await available()
+    shares = split_quota(needed, len(ready)) if ready else []
+    # Files that cannot give their share are made up by the others, so a second round asks more.
+    for _round in range(2):
+        total = sum(have.values())
+        if total >= needed or generator_factory is None or report.error:
+            break
+        for mid, share in zip(ready, shares, strict=True):
+            missing = share - have[mid] if _round == 0 else needed - sum(have.values())
+            if missing <= 0:
+                continue
+            async with session_maker() as session:
+                stats = await deep.material_stats(session, mid)
+            target = min(deep.MAX_QUESTIONS, stats.total + missing)
+            if target <= stats.total:
+                continue  # this file already holds the most questions one file may give
+
+            before = sum(have.values())
+
+            async def step(done: int, _t: int, _c: int, _n: int, before: int = before, base: int = stats.total) -> None:
+                if progress:
+                    await progress(before + max(0, done - base), needed)
+
+            result = await deep.run(session_maker, mid, generator_factory, step, target=target)
+            report.created += result.created_now
+            have = await available()
+            if result.status in (deep.PAUSED, deep.FAILED) and result.error != "already_running":
+                report.error = result.error or result.status
+                break
+            if sum(have.values()) >= needed:
+                break
+    report.available = sum(have.values())
+    return report

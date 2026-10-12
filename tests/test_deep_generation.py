@@ -281,3 +281,66 @@ async def test_material_page_shows_question_stats_and_deep_button(tg, session_ma
     async with session_maker() as session:
         total = (await session.execute(select(func.count(Question.id)))).scalar_one()
     assert total == 6
+
+
+async def test_pack_makes_unique_questions_then_splits_them_into_tests(tg, session_maker, monkeypatch):  # noqa: F811
+    """📦 300 tagacha, 20 tadan: two files hold 55 unique rules → 2 full tests of 20 are sent, the rest
+    (15) is offered as a part-filled third; no question repeats between the tests."""
+    from app.handlers.admin import create_test as ct
+    from app.models import BotSetting, Material, Test, TestQuestion, TestStatus
+    from app.services import test_builder as tb
+
+    llm = FactLLM()
+    monkeypatch.setattr(ct, "make_generator", factory(llm))
+    monkeypatch.setattr(ct, "ai_available", lambda: True)
+    a = await make_material_with_text(session_maker, law_text(30), title="Kodeks", file_name="kodeks.pdf")
+    b = await make_material_with_text(session_maker, law_text(25, start=31), title="Qonun", file_name="qonun.pdf")
+    async with session_maker() as session:
+        admin = await make_employee(session, ADMIN, "Admin Bosh")
+        now = tb.utcnow()
+        draft = await tb.create_test(
+            session,
+            tb.TestDraftData(title="Katta test", question_count=20, starts_at=now, deadline_at=now + tb.OPEN_WINDOW,
+                             material_ids=[a, b], answer_reveal="immediate"),
+            admin.id,
+        )  # fmt: skip
+        for mid in (a, b):
+            await tb.ensure_source(session, draft.id, await session.get(Material, mid))
+        await session.commit()
+        draft_id = draft.id
+
+    # The admin's choice: 📦 300 tagacha, 15 ta test × 20 ta.
+    await tg(callback_update(ADMIN, AdminCB(s="ct_n", id=draft_id, v="20").pack()))
+    buttons = [x.text for row in tg.session.last_markup().inline_keyboard for x in row]
+    assert "📦 300 tagacha: 15 ta test × 20 ta = 300 ta savol" in buttons
+    await tg(callback_update(ADMIN, AdminCB(s="ct_vn", id=draft_id, v="max").pack()))
+    async with session_maker() as session:
+        assert await ct.is_pack(session, draft_id) and await ct.variant_count(session, draft_id) == 15
+
+    msg = await tg.bot.send_message(ADMIN, "⏳")
+    tg.session.clear()
+    await ct.build_and_send(session_maker, tg.bot, draft_id, ADMIN, msg.message_id)
+    summary = tg.session.texts()[-1]
+    assert "✅ 1-variant — 20 ta savol" in summary and "✅ 2-variant — 20 ta savol" in summary
+    assert "3-variant — 15/20" in summary  # the rest, not sent: the admin may send it as is
+    assert "jami <b>55 ta</b> noyob savol" in summary
+    assert any("noyob savollar tuzilmoqda" in x for x in tg.session.texts())
+
+    async with session_maker() as session:
+        assert len((await session.execute(select(Question))).unique().scalars().all()) == 55
+        tests = (
+            (await session.execute(select(Test).where(Test.title.like("Katta test — %")).order_by(Test.id)))
+            .scalars()
+            .all()
+        )
+        assert len(tests) == 3  # no empty 4th…15th tests
+        assert [x.status for x in tests[:2]] == [TestStatus.ACTIVE, TestStatus.ACTIVE]
+        seen: set[int] = set()
+        for x in tests:
+            ids = list(
+                (await session.execute(select(TestQuestion.question_id).where(TestQuestion.test_id == x.id))).scalars()
+            )
+            assert not seen & set(ids)
+            seen |= set(ids)
+        assert len(seen) == 55
+        assert await session.get(BotSetting, f"ct_pack:{draft_id}") is None

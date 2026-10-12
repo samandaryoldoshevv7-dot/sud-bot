@@ -19,7 +19,7 @@ from app.models import DURATION_CHOICES, DeliveryMode, TestDifficulty, User
 from app.services import groups as group_service
 from app.services import materials as material_service
 from app.services.ai_runtime import ai_available
-from app.services.test_builder import OPEN_WINDOW, TestDraftData, TestStateError, create_test
+from app.services.test_builder import MAX_TEST_QUESTIONS, OPEN_WINDOW, TestDraftData, TestStateError, create_test
 from app.utils.text import esc, truncate
 from app.utils.time import fmt_dt, fmt_hours, parse_local_datetime, utcnow
 
@@ -248,7 +248,7 @@ async def on_text(message: Message, state: FSMContext, session: AsyncSession) ->
     elif step == "description":
         await _set(state, description=value[:2000])
     elif step == "count":
-        if not value.isdigit() or not 1 <= int(value) <= 100:
+        if not value.isdigit() or not 1 <= int(value) <= MAX_TEST_QUESTIONS:
             await message.answer(t("wiz.err.count"))
             return
         await _set(state, count=int(value))
