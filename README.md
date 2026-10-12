@@ -46,7 +46,7 @@ Excel hisobotlarni kuzatadi.
 | 👥 Xodimlar | ro'yxat (sahifalash), qidirish, faollashtirish, **⛔️ bloklash / blokdan chiqarish**, **🗑 o'chirish** (ro'yxatdan yo'qoladi, natijalari hisobotda qoladi; «🗑 O'chirilganlar»dan qayta tiklash yoki ❌ butunlay o'chirish), profil, statistika, zaif/kuchli mavzular, **xato javoblar** tarixi |
 | 📚 Materiallar | PDF / DOCX / TXT / MD fayl yoki nusxalangan matn yuklash; avtomatik ajratish → tozalash → bo'laklash → embedding; holat UPLOADED/PROCESSING/READY/FAILED; xato sababi; AI bilan savol yaratish; arxivlash/o'chirish |
 | 📰 Yangiliklar | sarlavha, matn, sana, manba, toifa, faol/nofaol; testlarda manba sifatida (masalan 30%) |
-| 📝 Testlar | Usta: nom, tavsif, savollar soni, variantlar (3–5), qiyinlik, manbalar, yangiliklar %, mavzu, **qayerda ishlanadi (guruhda yoki shaxsiy chatda)**, boshlanish, muddat, aralashtirish, javoblarni ko'rsatish rejimi (darhol / test oxirida / ko'rsatilmaydi), o'tish bali. **⚡ Tezkor test**: material sahifasidan bir bosishda. Hayot sikli: **DRAFT → READY → ACTIVE → EXPIRED / CLOSED** |
+| 📝 Testlar | Usta: nom, tavsif, savollar soni, variantlar (3–5), qiyinlik, manbalar, yangiliklar %, mavzu, boshlanish, muddat, aralashtirish, javoblarni ko'rsatish rejimi (darhol / test oxirida / ko'rsatilmaydi), o'tish bali. **⚡ Tezkor test**: material sahifasidan bir bosishda. Hayot sikli: **DRAFT → READY → ACTIVE → EXPIRED / CLOSED** |
 | 👀 Ko'rib chiqish | har bir savol: ✅ Tasdiqlash / ❌ Rad etish / 🔄 Qayta yaratish; manba va iqtibos ko'rinadi. Tasdiqlanmagan savollar bilan test e'lon qilinmaydi |
 | 🗂 Savollar banki | qayta ishlatiladigan bank: filtr (holat, mavzu, material, yangilik, qiyinlik), qidirish, tasdiqlash, tahrirlash (versiyalanadi), o'chirish, qayta yaratish, izohni manbadan AI bilan qayta yozish |
 | 👥 Ishtirokchilar | har bir test uchun: **Jami / Yakunlagan / Jarayonda / Muddati o'tgan / Bekor / Qatnashmagan**; ball, to'g'ri, xato, vaqt, boshlangan va tugagan vaqt; har bir xodimning **har bir javobi** (🧾 Kim nimani tanladi) va savollar bo'yicha A/B/C/D taqsimoti |
@@ -125,17 +125,31 @@ xodim uchun aralashtiriladi; ko'rilgan harf → asl variant mapping'i saqlanadi 
 
 ### Guruhda test
 
-Admin: test sahifasi → **▶️ Guruhda boshlash** (yoki yaratishda «🏢 Guruhga»). Guruhga bitta xabar
-chiqadi: `📚 YANGI TEST` · nom · `📝 30 ta savol` · `⏱ 24 soat` · **[▶️ TESTNI BOSHLASH]**.
-Tugma bosilganda xodim faqat `callback.from_user.id` bo'yicha aniqlanadi, unga **alohida urinish**
-ochiladi (shaxsiy vaqti shu paytdan boshlanadi) va Telegram bot bilan **shaxsiy chatni** ochadi —
-savollar o'sha yerda, boshqa a'zolar javoblarni ko'rmaydi. Ali, Vali, Hasan bir vaqtda bossa ham
-har birining urinishi va javoblari alohida (`test_attempts` + `user_answers`, qatorni `FOR UPDATE`
-bilan bloklash, `UNIQUE(attempt_id, test_question_id)`).
-Oldingi versiyada guruhga savollari bilan yuborilgan testlar tugaguncha avvalgidek ishlaydi.
+«👥 Barcha xodimlarga» va «🏢 Guruhga» testlari **guruhning o'zida** ishlanadi; faqat «☑️ Tanlangan
+xodimlarga» testlari bot bilan shaxsiy chatda.
 
-Yangi a'zolar: bot guruhda «👋 Xush kelibsiz» va faol testlar ro'yxatini tugma bilan yuboradi;
+* Guruhga qisqa sarlavha (`📚 YANGI TEST` · nom · `📝 30 ta savol` · `⏱ 24 soat`, tugmasiz) va
+  har bir savol **Telegram viktorinasi** bo'lib chiqadi (`[1/30] …`).
+* Viktorina anonim emas: har bir ovoz uni bergan xodimga yoziladi (`callback`/`poll_answer` dagi
+  `user` bo'yicha), javobni o'zgartirib bo'lmaydi (`allows_revoting=False`). Javob bergandan keyin
+  xodim boshqalar qanday javob berganini ko'radi; javob bermaguncha hech narsa ko'rinmaydi.
+* To'g'ri/noto'g'ri va qisqa izoh (💡) viktorinaning o'zida. Har bir javobdan keyin shaxsiy chatga
+  hech narsa yuborilmaydi; yakuniy natija va **📋 Xatolarni ko'rish** (to'liq izohlar) botga keladi.
+* Vaqt xodimning birinchi javobidan hisoblanadi. Test muddati tugaganda viktorinalar yopiladi.
+* Bunday testni botda (📚 Testlarim, eski havolalar) ochib bo'lmaydi: «👥 Bu test guruhda ishlanadi».
+* Savol 300 belgidan yoki variant 100 belgidan uzun bo'lsa ham viktorina bo'ladi: to'liq matn
+  viktorina ustida alohida xabarda chiqadi.
+
+Yangi a'zolar: bot guruhda «👋 Xush kelibsiz» va faol testlar ro'yxatini yuboradi;
 guruhda `/test` faol testlarni ko'rsatadi.
+
+### Variantlar va takrorlanmaslik
+
+Test yaratishda savollar sonidan keyin **🔢 Nechta variant? (1–5)** so'raladi. Har bir variant
+alohida test («Nom — 1-variant», «Nom — 2-variant»…), fayllari, vaqti va auditoriyasi bir xil.
+Hech bir test boshqa testda ishlatilgan savolni olmaydi: bankdan faqat ishlatilmagan savollar
+olinadi, yetmaganini AI materialdan yangidan tuzadi. Material «tugasa» (yangi savol tuzib bo'lmasa),
+variant to'liq bo'lmaydi va admin «🔄 Davom ettirish» / «📤 … ta savol bilan yuborish»ni tanlaydi.
 
 ### Admin: boshqaruv va 📋 Natijalar
 

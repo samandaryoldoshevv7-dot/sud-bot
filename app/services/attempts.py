@@ -52,6 +52,7 @@ class StartError(str, Enum):
     NO_QUESTIONS = "no_questions"
     PAUSED = "paused"
     NOT_ASSIGNED = "not_assigned"
+    IN_GROUP = "in_group"  # the test runs inside the Telegram group, not in the private chat
 
 
 @dataclass

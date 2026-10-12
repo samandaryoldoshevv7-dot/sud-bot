@@ -1,9 +1,8 @@
 """Questions as native Telegram quiz polls (the "Quiz Bot" look).
 
 Telegram limits: question 300 characters, each option 100, explanation 200 (at most 2 line
-breaks). A question that does not fit is shown the classic way (text + buttons) instead, so no
-question is ever shortened in a way that could change its meaning. Only the explanation may be
-shortened: the full text is then sent right after the answer.
+breaks). A question that does not fit is still a poll: its full text and options are sent in a
+message right above it. The explanation may be shortened; the full one is in 📋 Xatolarni ko'rish.
 """
 
 from __future__ import annotations
@@ -15,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.locales import t
 from app.models import AnswerReveal, QuizPoll, TestAttempt, TestQuestion
+from app.utils.text import esc
 from app.utils.time import utcnow
 
 QUESTION_MAX = 300
@@ -43,6 +43,8 @@ class PollSpec:
     correct_option_id: int | None
     explanation: str | None
     explanation_cut: bool
+    # A question or option too long for a poll: the full text goes in a message right above it.
+    preface: str | None = None
 
 
 def _explanation(tq: TestQuestion) -> tuple[str | None, bool]:
@@ -65,21 +67,36 @@ def build(attempt: TestAttempt, tq: TestQuestion, item: dict, position: int, rev
 
 
 def build_for(tq: TestQuestion, opts: list[str], position: int, total: int, reveal: AnswerReveal) -> PollSpec | None:
-    """``opts`` = original option letters in the order they are shown (A, B, C...)."""
-    question = f"[{position + 1}/{total}] {' '.join(tq.question_text.split())}"
-    if not all(o in tq.options for o in opts):
+    """``opts`` = original option letters in the order they are shown (A, B, C...).
+
+    Every question becomes a poll. When the question (300) or an option (100) is longer than
+    Telegram allows, the full question and options are sent as a message right above the poll
+    (``preface``) and the poll carries "[n/total] ⬆️ …" and the lettered, shortened options."""
+    if not all(o in tq.options for o in opts) or not 2 <= len(opts) <= MAX_OPTIONS:
         return None
-    options = [" ".join(tq.options[o].split()) for o in opts]
-    if tg_len(question) > QUESTION_MAX or not 2 <= len(options) <= MAX_OPTIONS:
-        return None
-    if any(not o or tg_len(o) > OPTION_MAX for o in options):
-        return None
+    head = f"[{position + 1}/{total}]"
+    text = " ".join(tq.question_text.split())
+    full_options = [" ".join(tq.options[o].split()) for o in opts]
+    question = f"{head} {text}"
+    options = full_options
+    preface = None
+    if tg_len(question) > QUESTION_MAX or any(not o or tg_len(o) > OPTION_MAX for o in full_options):
+        letters = [chr(ord("A") + i) for i in range(len(opts))]
+        preface = "\n".join(
+            [f"<b>{head}</b> <b>{esc(text)}</b>", ""]
+            + [f"<b>{L})</b> {esc(o)}" for L, o in zip(letters, full_options, strict=True)]
+        )
+        question = t("quiz.poll_see_above", head=head)
+        options = [
+            o if tg_len(o) <= OPTION_MAX else _cut(o, OPTION_MAX)
+            for o in (f"{L}) {o}" for L, o in zip(letters, full_options, strict=True))
+        ]
     if reveal != AnswerReveal.IMMEDIATE:
-        return PollSpec(question, options, quiz=False, correct_option_id=None, explanation=None, explanation_cut=False)
+        return PollSpec(question, options, False, None, None, False, preface)
     if tq.correct_option not in opts:
         return None
     explanation, cut = _explanation(tq)
-    return PollSpec(question, options, True, opts.index(tq.correct_option), explanation, cut)
+    return PollSpec(question, options, True, opts.index(tq.correct_option), explanation, cut, preface)
 
 
 def send_kwargs(spec: PollSpec) -> dict:

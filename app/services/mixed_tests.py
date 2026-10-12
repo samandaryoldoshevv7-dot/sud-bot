@@ -40,7 +40,7 @@ from app.models import (
 )
 from app.rag.vector_store import SourceScope
 from app.services.question_generation import GenerationRequest, QuestionGenerator
-from app.services.test_builder import select_bank_questions, snapshot_question
+from app.services.test_builder import questions_used_by_other_tests, select_bank_questions, snapshot_question
 
 logger = logging.getLogger(__name__)
 
@@ -204,6 +204,9 @@ async def _build(
     used: set[int] = set(
         (await session.execute(select(Question.id).where(Question.status == QuestionStatus.REJECTED))).scalars().all()
     )
+    # Questions of earlier tests (and of the other variants) are never repeated: the bank gives only
+    # unused ones and the AI writes new questions for the rest.
+    used |= await questions_used_by_other_tests(session, test_id)
     picked: dict[int, list[Question]] = {s.id: [] for s in ready}
     generator: QuestionGenerator | None = None
     ai_blocked = False  # after a rate limit, further AI calls would only wait: use the bank only

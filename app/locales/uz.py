@@ -71,9 +71,6 @@ TEXTS: dict[str, str] = {
         "Guruhni ulash: botni guruhga qo'shing va guruhda /register buyrug'ini yuboring."
     ),
     # ------------------------------------------------------------------ admin menu
-    "admin.menu.mode": "🧭 Testlar rejimi: <b>{m}</b>",
-    "admin.mode.set_group": "✅ Rejim: 👥 Guruhda ishlash.\n\nGuruhga yuboriladigan testlarning savollari va A/B/C/D tugmalari guruhning o'zida chiqadi. Xodimlar shaxsiy chatga o'tkazilmaydi.",
-    "admin.mode.set_private": "✅ Rejim: 💬 Shaxsiy chatda ishlash.\n\nXodimlar testni bot bilan shaxsiy chatda boshlaydi va yakunlaydi.",
     "admin.menu.title": "👨‍💼 <b>ADMIN PANEL</b>\n\nKerakli bo'limni tanlang:",
     "menu.employees": "👥 Xodimlar",
     "menu.materials": "📚 Materiallar",
@@ -87,8 +84,6 @@ TEXTS: dict[str, str] = {
     "menu.reports": "📈 Hisobotlar",
     "menu.groups": "👥 Guruhlar",
     "menu.settings": "⚙️ Sozlamalar",
-    "menu.mode_group": "👥 Guruhda ishlash",
-    "menu.mode_private": "💬 Shaxsiy chatda ishlash",
     "ai.not_configured": "⚠️ AI sozlanmagan: Railway Variables'ga GEMINI_API_KEY yoki GROQ_API_KEY (yoki CEREBRAS_API_KEY / OPENROUTER_API_KEY) qo'shing. Hozircha faqat savollar bankidagi savollardan foydalaniladi.",
     "ai.not_configured_short": "AI sozlanmagan — faqat savollar banki ishlatiladi",
     # ------------------------------------------------------------------ employee
@@ -132,8 +127,7 @@ TEXTS: dict[str, str] = {
     "quiz.correct_answer": "✅ <b>TO'G'RI JAVOB:</b>",
     "quiz.explanation": "💡 Izoh: {text}",
     "quiz.btn.close": "➡️ Keyingi savol",
-    "quiz.your_answer_inline": "Sizning javobingiz: {a}",
-    "quiz.correct_answer_inline": "✅ To'g'ri javob: {a}",
+    "quiz.poll_see_above": "{head} ⬆️ Savol va variantlar yuqoridagi xabarda",
     "quiz.btn.time": "⏳ Qolgan vaqt",
     "quiz.time_alert": "⏳ Qolgan vaqt: {d}\n🕓 Tugash: {end}",
     "quiz.poll_explanation_source": "📚 {s}",
@@ -193,11 +187,12 @@ TEXTS: dict[str, str] = {
     "emp.start_error.no_questions": "⚠️ Testda savollar yo'q.",
     "emp.start_error.paused": "⏸ Test administrator tomonidan vaqtincha to'xtatilgan.",
     "emp.start_error.not_assigned": "⛔️ Bu test sizga berilmagan.",
+    "emp.start_error.in_group": "👥 Bu test guruhda ishlanadi: guruhdagi viktorina savollariga javob bering. Natija va xatolar shu yerga keladi.",
     "emp.test_card.group_mode": "👥 Bu test guruhda ishlanadi. Savollarni guruhda ko'rmasangiz, shu yerda «▶️ TESTNI BOSHLASH» ni bosing — javoblaringiz o'sha testga yoziladi (har bir savolga bitta javob).",
     "reminder.body": "⏰ <b>Eslatma!</b>\n\n«{title}» testini yakunlash muddati: <b>{deadline}</b>.\nIltimos, testni o'z vaqtida topshiring.",
     "announce.group_header": "📚 <b>YANGI TEST</b>",
     "announce.dm_header": "📚 <b>Sizga yangi test berildi</b>",
-    "announce.dm_in_group": "👥 Bu test guruhda ishlanadi: guruhdagi savollarga A/B/C/D tugmalari orqali javob bering.",
+    "announce.dm_in_group": "👥 Bu test guruhda ishlanadi: guruhdagi viktorina savollariga javob bering. Natija shu yerga keladi.",
     "announce.body": "<b>{title}</b>\n\n📝 {questions} ta savol\n⏱ {duration}",
     "announce.sources": "📚 Manbalar: {s}",
     "summary.test_ended": (
@@ -216,9 +211,9 @@ TEXTS: dict[str, str] = {
         "Javoblaringizni boshqalar ko'rmaydi; vaqt tugmani bosgan paytingizdan hisoblanadi."
     ),
     "gt.header_hint_group": (
-        "👥 Test shu guruhda ishlanadi: savollar quyida. Har bir savolda A/B/C/D tugmalaridan birini bosing — "
-        "javob aynan sizga yoziladi va natijani faqat siz ko'rasiz. Javobni o'zgartirib bo'lmaydi; vaqt birinchi "
-        "bosgan paytingizdan hisoblanadi."
+        "👇 Savollar quyida — Telegram viktorinasi. Har bir savolda bitta variantni tanlang: javob aynan sizga "
+        "yoziladi va uni o'zgartirib bo'lmaydi. Javob berganingizdan keyin kim qanday javob berganini ko'rasiz. "
+        "Vaqt birinchi javobingizdan hisoblanadi; yakuniy natija va izohlar botda (📋 Xatolarni ko'rish)."
     ),
     "gt.header_finished": "🏁 <b>TEST YAKUNLANDI</b>\n\n📚 <b>{title}</b>\n📝 {n} ta savol\nYopildi: {end}",
     "gt.participants": "👥 Qatnashmoqda: <b>{n}</b>",
@@ -234,8 +229,6 @@ TEXTS: dict[str, str] = {
     "gt.alert.accepted": "✅ Javobingiz qabul qilindi.\n🔒 Tanlangan: {selected}",
     "gt.alert.correct": "✅ TO'G'RI JAVOB!\nSiz tanladingiz: {selected}",
     "gt.alert.wrong": "❌ NOTO'G'RI JAVOB\nSiz tanladingiz: {selected}\nTo'g'ri javob: {correct}",
-    "gt.alert.more_in_dm": "📩 Nima uchunligi botga yuborildi.",
-    "gt.alert.open_bot": "💬 Izohni olish uchun botga /start yozing.",
     "gt.alert.finished": "🏁 Test yakunlandi: {c}/{total} ({score})",
     "gt.alert.finished_hidden": "🏁 Barcha savollarga javob berildi.",
     "gt.alert.not_started": "⏳ Test hali boshlanmagan.",
@@ -244,7 +237,7 @@ TEXTS: dict[str, str] = {
     "gt.alert.pending": "⏳ Avval administrator sizni tasdiqlashi kerak. Botga shaxsiy /start yozing.",
     "gt.alert.invalid": "Bu tugma eskirgan.",
     "gt.admin_posted_ok": "✅ «{title}» testi «{group}» guruhiga yuborildi. Xodimlar «▶️ TESTNI BOSHLASH» ni bosadi va testni bot bilan shaxsiy chatda ishlaydi (har biri alohida).",
-    "gt.admin_posted_ok_group": "✅ «{title}» testi «{group}» guruhiga yuborildi. Savollar va A/B/C/D tugmalari guruhning o'zida — xodimlar shu yerda javob beradi (har birining javobi o'ziga yoziladi).",
+    "gt.admin_posted_ok_group": "✅ «{title}» testi «{group}» guruhiga yuborildi. Savollar guruhda viktorina bo'lib chiqdi — xodimlar shu yerda javob beradi (har birining javobi o'ziga yoziladi).",
     "gt.admin_post_failed": "❌ «{title}» testini «{group}» guruhiga yuborib bo'lmadi.\n\nTekshiring: bot guruhda bormi va xabar yozish huquqi bormi (botni guruhga <b>administrator</b> qiling), so'ng test sahifasida «▶️ Guruhda boshlash» ni qayta bosing.",
     "gt.admin_post_failed_auto": "❌ #{id} testini guruhga yuborib bo'lmadi. Botni guruhga administrator qiling va test sahifasida «▶️ Guruhda boshlash» ni bosing.",
     # ------------------------------------------------------------------ groups (in-group)
@@ -254,7 +247,7 @@ TEXTS: dict[str, str] = {
     "group.active_tests": "📝 <b>Guruhda faol testlar:</b>",
     "group.active_test_line": "• <b>{title}</b> — {n} ta savol, tugash: {end}",
     "group.active_tests_hint": "Savollar guruhda yuqoriroqda. Ularni ko'rmasangiz (yangi a'zolar uchun eski xabarlar yashirin bo'lishi mumkin), quyidagi tugma orqali testni bot bilan ishlang — javoblar shu testga yoziladi.",
-    "group.active_tests_hint_group": "Savollar shu guruhda yuqoriroqda — A/B/C/D tugmalari orqali javob bering. Javob aynan sizga yoziladi.",
+    "group.active_tests_hint_group": "Savollar shu guruhda yuqoriroqda — viktorinaga javob bering. Javob aynan sizga yoziladi.",
     "group.btn.take_in_bot": "▶️ {title} — bot orqali",
     "group.welcome_new_member": "👋 Xush kelibsiz, {name}!",
     "group.btn.open_bot": "🤖 Botni ochish",
@@ -275,7 +268,20 @@ TEXTS: dict[str, str] = {
     "ct.btn.custom": "✍️ Maxsus son",
     "ct.ask_count": "🔀 <b>Aralash test</b>\n\n{sources}\n\nNechta savol tuzilsin?",
     "ct.ask_custom_count": "Savollar sonini yuboring (1–100):",
-    "ct.ask_duration": "⏱ <b>TEST VAQTI</b>\n\nHar bir xodim uchun vaqt «▶️ TESTNI BOSHLASH» bosilgan paytdan hisoblanadi.",
+    "ct.ask_duration": "⏱ <b>TEST VAQTI</b>\n\nHar bir xodim uchun vaqt u testni boshlagan (birinchi javob bergan) paytdan hisoblanadi.",
+    "ct.ask_variants": (
+        "🔢 <b>Nechta variant?</b>\n\nHar bir variant — alohida test ({n} ta savoldan). Variantlarning savollari "
+        "bir-birini takrorlamaydi, avvalgi testlardagi savollar ham qaytarilmaydi."
+    ),
+    "ct.confirm_variants": "🔢 Variantlar: <b>{n} ta</b> (har birida {q} ta savol, takrorlanmaydi)",
+    "ct.variant_title": "{title} — {k}-variant",
+    "ct.progress_variant": "⏳ {k}/{n}-variant: savollar tuzilmoqda {done}/{total}",
+    "ct.variants_done": "📚 <b>{title}</b> — {n} ta variant\n\n{lines}\n\n{audience}",
+    "ct.variant_ok": "✅ {k}-variant — {created} ta savol, yuborildi",
+    "ct.variant_partial": "⚠️ {k}-variant — {created}/{requested} ta savol, yuborilmadi. Sabab: {reason}",
+    "ct.btn.variant_open": "📂 {k}",
+    "ct.btn.variant_resume": "🔄 {k}-variantni davom ettirish",
+    "ct.btn.variant_send_partial": "📤 {k}-variantni {n} ta savol bilan yuborish",
     "ct.ask_audience": "👥 <b>Kimlarga berilsin?</b>",
     "ct.aud.all": "👥 Barcha xodimlarga",
     "ct.aud.group": "🏢 Guruhga",
@@ -786,6 +792,14 @@ TEXTS: dict[str, str] = {
     "qb.section": "🗂 <b>SAVOLLAR BANKI</b>\nJami: {total} | ✅ {approved} | 🟡 {pending} | ❌ {rejected}",
     "qb.filter": "Filtr: {f}",
     "qb.found": "Topildi: <b>{n}</b>",
+    "qb.btn.delete_all": "🗑 Barchasini o'chirish ({n} ta)",
+    "qb.delete_all_confirm": (
+        "🗑 <b>{n} ta savol o'chirilsinmi?</b>\n\nFiltr: {f}\n\nRo'yxatda ko'rinayotgan hamma savollar bankdan butunlay "
+        "o'chiriladi, qaytarib bo'lmaydi. Yuborilgan testlar va ularning natijalari o'zgarmaydi. Materiallar "
+        "(fayllar) o'chmaydi — keyin ulardan yangi savollar tuzish mumkin."
+    ),
+    "qb.deleted_all": "🗑 {n} ta savol o'chirildi.",
+    "qb.nothing_to_delete": "O'chiriladigan savol yo'q.",
     "qb.btn.filters": "🔎 Filtrlar",
     "qb.btn.search": "🔍 Qidirish",
     "qb.btn.by_topic": "🏷 Mavzu",

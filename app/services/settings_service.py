@@ -32,9 +32,8 @@ SPECS: dict[str, SettingSpec] = {
         SettingSpec("reminder_hours_before", 3, "int", 0, 72),
         SettingSpec("weak_topic_min_answers", 3, "int", 1, 50),
         SettingSpec("auto_generate_questions", 20, "int", 0, 50),
-        SettingSpec("quiz_polls", True, "bool"),  # questions as native Telegram quiz polls
-        # Where employees take tests: False = the bot's private chat, True = inside the Telegram group.
-        SettingSpec("tests_in_group", False, "bool", visible=False),
+        # Questions as native Telegram quiz polls (always on; the classic look is kept only as a fallback).
+        SettingSpec("quiz_polls", True, "bool", visible=False),
     ]
 }
 

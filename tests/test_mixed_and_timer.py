@@ -210,7 +210,7 @@ async def test_three_users_answer_the_same_question_at_once(session_maker):
 # ------------------------------------------------------------------------------ GROUP
 
 
-async def test_group_start_identifies_user_and_opens_private_session(tg, session_maker):  # noqa: F811
+async def test_group_start_identifies_user_and_keeps_the_test_in_the_group(tg, session_maker):  # noqa: F811
     async with session_maker() as session:
         admin = await make_employee(session, ADMIN, "Admin Bosh")
         group, _ = await group_service.register_group(session, GROUP_CHAT, "Sud xodimlari", admin)
@@ -221,22 +221,27 @@ async def test_group_start_identifies_user_and_opens_private_session(tg, session
     header = tg.session.sent_to(GROUP_CHAT)
     assert len(header) == 1 and "📚 <b>YANGI TEST</b>" in header[0].text and "📝 4 ta savol" in header[0].text
     assert "⏱ 24 soat" in header[0].text
-    # Ali and Vali press ▶️ TESTNI BOSHLASH at the same time: each gets their own attempt.
+    # Ali and Vali press ▶️ TESTNI BOSHLASH on an older header at the same time: each gets their own
+    # attempt, nobody is sent to the private chat, and the questions are posted into the group once.
     tg.session.clear()
     await asyncio.gather(
         tg(callback_update(7201, GroupStartCB(p=post_id).pack(), "Ali", chat_id=GROUP_CHAT)),
         tg(callback_update(7202, GroupStartCB(p=post_id).pack(), "Vali", chat_id=GROUP_CHAT)),
     )
-    urls = [m.url for m in tg.session.requests if isinstance(m, AnswerCallbackQuery)]
-    assert urls and all(u and u.endswith(f"start=run_{test_id}") for u in urls)
+    from tests.test_quiz_polls import _wait_background
+
+    await _wait_background()
+    calls = [m for m in tg.session.requests if isinstance(m, AnswerCallbackQuery)]
+    assert len(calls) == 2 and all(c.url is None and "Test boshlandi" in (c.text or "") for c in calls)
+    assert len(tg.session.polls()) == 4
     async with session_maker() as session:
         attempts = (await session.execute(select(TestAttempt).where(TestAttempt.test_id == test_id))).scalars().all()
         assert sorted(a.user_id for a in attempts) and len(attempts) == 2
-    # The deep link opens the private chat and shows Ali's first question there (not in the group).
+    # An old link to the bot does not open it privately either.
     tg.session.clear()
     await tg(message_update(7201, f"/start run_{test_id}", "Ali"))
-    assert any("<b>[1/4]</b>" in x for x in (m.text for m in tg.session.sent_to(7201)))
-    assert tg.session.sent_to(GROUP_CHAT) == []
+    assert any("guruhda ishlanadi" in m.text for m in tg.session.sent_to(7201))
+    assert not tg.session.polls()
 
 
 # ------------------------------------------------------------------------------ ADMIN: 4 files → mixed test
@@ -353,6 +358,9 @@ async def test_admin_creates_mixed_test_through_the_bot(tg, session_maker):  # n
         "Konstitutsiya + Ma'muriy kodeks + Mehnat kodeksi + Sug'urta qonunchiligi" in x for x in tg.session.texts()
     )
     await tg(callback_update(ADMIN, AdminCB(s="ct_n", id=test_id, v="8").pack()))
+    variants = [b.text for row in tg.session.last_markup().inline_keyboard for b in row if b.text != "❌ Bekor qilish"]
+    assert variants == ["1", "2", "3", "4", "5"] and any("Nechta variant" in x for x in tg.session.texts())
+    await tg(callback_update(ADMIN, AdminCB(s="ct_vn", id=test_id, v="1").pack()))
     durations = [b.text for row in tg.session.last_markup().inline_keyboard for b in row if b.text != "❌ Bekor qilish"]
     assert durations[:4] == ["6 soat", "12 soat", "24 soat", "2 kun"] and len(DURATION_CHOICES) == 4
     await tg(callback_update(ADMIN, AdminCB(s="ct_d", id=test_id, v=str(12 * 3600)).pack()))
@@ -636,3 +644,58 @@ def test_log_calls_never_crash_on_reserved_extra_keys():
         for match in re.finditer(r"extra=\{([^}]*)\}", path.read_text(), re.S):
             keys = set(re.findall(r'"([a-zA-Z_]+)"\s*:', match.group(1)))
             assert not keys & reserved, (path, keys & reserved)
+
+
+async def test_variants_are_separate_tests_without_repeated_questions(tg, session_maker):  # noqa: F811
+    """🔢 2 variants of 4 questions from 2 files: two tests, 8 different questions, none repeated."""
+    from app.handlers.admin.create_test import build_and_send
+    from app.models import BotSetting
+
+    async with session_maker() as session:
+        admin = await make_employee(session, ADMIN, "Admin Bosh")
+        test = await _two_source_test(session_maker, session)  # a published 4-question test (4 bank questions)
+        first_test_questions = set(
+            (await session.execute(select(TestQuestion.question_id).where(TestQuestion.test_id == test.id))).scalars()
+        )
+        sources = (await session.execute(select(TestSource).where(TestSource.test_id == test.id))).scalars().all()
+        for src in sources:  # 4 more unused questions per file: exactly enough for 2 variants x 4
+            for i in range(4):
+                await make_question(
+                    session, text_=f"{src.source_name}: yangi {i + 1}-savol?", material_id=src.material_id
+                )
+        now = utcnow()
+        draft = await tb.create_test(
+            session,
+            tb.TestDraftData(title="Sud amaliyoti", question_count=4, starts_at=now, deadline_at=now + tb.OPEN_WINDOW,
+                             material_ids=[s.material_id for s in sources], answer_reveal="immediate",
+                             audience=TestAudience.USERS),
+            admin.id,
+        )  # fmt: skip
+        session.add(BotSetting(key=f"ct_variants:{draft.id}", value=2))
+        await session.commit()
+        draft_id = draft.id
+    msg = await tg.bot.send_message(ADMIN, "⏳")
+    tg.session.clear()
+    await build_and_send(session_maker, tg.bot, draft_id, ADMIN, msg.message_id)
+    summary = tg.session.texts()[-1]
+    assert (
+        "2 ta variant" in summary and "✅ 1-variant — 4 ta savol" in summary and "✅ 2-variant — 4 ta savol" in summary
+    )
+    async with session_maker() as session:
+        tests = (
+            (await session.execute(select(Test).where(Test.title.like("Sud amaliyoti — %-variant")).order_by(Test.id)))
+            .scalars()
+            .all()
+        )
+        assert [x.title for x in tests] == ["Sud amaliyoti — 1-variant", "Sud amaliyoti — 2-variant"]
+        assert all(x.status == TestStatus.ACTIVE for x in tests)
+        per_test = []
+        for x in tests:
+            ids = set(
+                (await session.execute(select(TestQuestion.question_id).where(TestQuestion.test_id == x.id))).scalars()
+            )
+            assert len(ids) == 4
+            per_test.append(ids)
+        assert not per_test[0] & per_test[1]  # the variants share no question
+        assert not (per_test[0] | per_test[1]) & first_test_questions  # nor with the earlier test
+        assert await session.get(BotSetting, f"ct_variants:{draft_id}") is None

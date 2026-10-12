@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 
-from sqlalchemy import Select, func, or_, select
+from sqlalchemy import Select, delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Difficulty, Question, QuestionStatus, SourceChunk, Topic
@@ -105,6 +105,23 @@ async def delete_question(session: AsyncSession, question_id: int) -> bool:
     await session.delete(question)
     await session.commit()
     return True
+
+
+async def count_matching(session: AsyncSession, flt: QuestionFilter) -> int:
+    return (await session.execute(_apply(select(func.count(Question.id)), flt))).scalar_one()
+
+
+async def delete_matching(session: AsyncSession, flt: QuestionFilter) -> int:
+    """Hard delete every question the filter shows (no filter: the whole bank). Test snapshots keep
+    their copies (FK is SET NULL), so tests already given and their results stay intact."""
+    ids = _apply(select(Question.id), flt).scalar_subquery()
+    result = await session.execute(
+        delete(Question).where(Question.id.in_(ids)).execution_options(synchronize_session=False)
+    )
+    await session.commit()
+    deleted = int(result.rowcount or 0)
+    logger.warning("Question bank: questions deleted in bulk", extra={"count": deleted, "filter": flt.to_dict()})
+    return deleted
 
 
 EDITABLE_FIELDS = ("question", "A", "B", "C", "D", "E", "correct", "explanation", "topic", "difficulty")

@@ -88,6 +88,8 @@ async def render_list(target, session: AsyncSession, state: FSMContext, page: in
             [(f"{STATUS_ICON[q.status]} #{q.id} {truncate(q.question_text, 40)}", AdminCB(s="qb_v", id=q.id, p=page))]
         )
     rows.append(pager("qb_l", page, total, qb.PAGE_SIZE))
+    if total:
+        rows.append([(t("qb.btn.delete_all", n=total), AdminCB(s="qb_delall", v=str(total)))])
     rows.append(back_menu_row("menu"))
     await show(target, "\n".join(lines), kb(*rows))
 
@@ -276,6 +278,43 @@ async def cb_delete_ok(
     await qb.delete_question(session, callback_data.id)
     await callback.answer(t("common.deleted"))
     await render_list(callback, session, state, callback_data.p)
+
+
+async def _delete_all_confirm(callback: CallbackQuery, session: AsyncSession, state: FSMContext, n: int) -> None:
+    flt = await _filter(state)
+    await show(
+        callback,
+        t("qb.delete_all_confirm", n=n, f=await _describe(session, flt)),
+        confirm_kb(AdminCB(s="qb_delall_ok", v=str(n)), AdminCB(s="qb_l", p=0)),
+    )
+
+
+@router.callback_query(AdminCB.filter(F.s == "qb_delall"))
+async def cb_delete_all(callback: CallbackQuery, session: AsyncSession, state: FSMContext) -> None:
+    """🗑 Barchasini o'chirish: every question the current filter shows (no filter: the whole bank)."""
+    n = await qb.count_matching(session, await _filter(state))
+    if not n:
+        await callback.answer(t("qb.nothing_to_delete"), show_alert=True)
+        return
+    await _delete_all_confirm(callback, session, state, n)
+
+
+@router.callback_query(AdminCB.filter(F.s == "qb_delall_ok"))
+async def cb_delete_all_ok(
+    callback: CallbackQuery, callback_data: AdminCB, session: AsyncSession, state: FSMContext
+) -> None:
+    flt = await _filter(state)
+    n = await qb.count_matching(session, flt)
+    if str(n) != (callback_data.v or ""):  # the bank changed since the confirmation: ask again
+        if not n:
+            await callback.answer(t("qb.nothing_to_delete"), show_alert=True)
+            await render_list(callback, session, state, 0)
+            return
+        await _delete_all_confirm(callback, session, state, n)
+        return
+    deleted = await qb.delete_matching(session, flt)
+    await callback.answer(t("qb.deleted_all", n=deleted), show_alert=True)
+    await render_list(callback, session, state, 0)
 
 
 FIELD_KEYS = ("question", "A", "B", "C", "D", "E", "correct", "explanation", "topic", "difficulty")

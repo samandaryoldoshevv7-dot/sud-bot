@@ -15,7 +15,7 @@ async def _bank(session_maker, session, n=20):
 
 
 async def test_twenty_pending_bank_questions_make_a_twenty_question_test(session_maker, session):
-    await _bank(session_maker, session)
+    await _bank(session_maker, session, n=60)  # three tests below; questions are never repeated between tests
     for difficulty in (TestDifficulty.MIXED, TestDifficulty.MEDIUM, TestDifficulty.HARD):
         test = await make_test(session, question_count=20, difficulty=difficulty)
         report = await tb.assemble_questions(session_maker, test.id, None)

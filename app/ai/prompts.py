@@ -62,6 +62,8 @@ QUESTION QUALITY REQUIREMENTS:
 - Exactly ONE option is correct according to the excerpt; every other option must be clearly
   wrong according to the source, yet plausible to an unprepared reader.
 - All options must be meaningful, distinct, of similar length and style. No duplicates.
+- Keep it short enough for a Telegram quiz: the question at most 250 characters, each option at
+  most 90 characters (a short phrase, not a full paragraph).
 - FORBIDDEN options: "all of the above", "none of the above", "A and B", and their Uzbek or
   Russian equivalents ("barchasi to'g'ri", "hech biri", "yuqoridagilarning barchasi", ...).
 - Do not ask about page numbers, chunk ids, document formatting or the document title itself.
