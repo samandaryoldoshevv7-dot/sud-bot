@@ -71,26 +71,25 @@ def build_for(tq: TestQuestion, opts: list[str], position: int, total: int, reve
 
     Every question becomes a poll. When the question (300) or an option (100) is longer than
     Telegram allows, the full question and options are sent as a message right above the poll
-    (``preface``) and the poll carries "[n/total] ⬆️ …" and the lettered, shortened options."""
+    (``preface``) and the poll carries "[n/total] ⬆️ …" and the shortened options. Options are always
+    lettered "A) …", "B) …"."""
     if not all(o in tq.options for o in opts) or not 2 <= len(opts) <= MAX_OPTIONS:
         return None
     head = f"[{position + 1}/{total}]"
     text = " ".join(tq.question_text.split())
     full_options = [" ".join(tq.options[o].split()) for o in opts]
     question = f"{head} {text}"
-    options = full_options
+    letters = [chr(ord("A") + i) for i in range(len(opts))]
+    # Options always carry their letter (A, B, C, D), so a question reads the same everywhere.
+    options = [f"{L}) {o}" for L, o in zip(letters, full_options, strict=True)]
     preface = None
-    if tg_len(question) > QUESTION_MAX or any(not o or tg_len(o) > OPTION_MAX for o in full_options):
-        letters = [chr(ord("A") + i) for i in range(len(opts))]
+    if tg_len(question) > QUESTION_MAX or any(not o or tg_len(o) > OPTION_MAX for o in options):
         preface = "\n".join(
             [f"<b>{head}</b> <b>{esc(text)}</b>", ""]
             + [f"<b>{L})</b> {esc(o)}" for L, o in zip(letters, full_options, strict=True)]
         )
         question = t("quiz.poll_see_above", head=head)
-        options = [
-            o if tg_len(o) <= OPTION_MAX else _cut(o, OPTION_MAX)
-            for o in (f"{L}) {o}" for L, o in zip(letters, full_options, strict=True))
-        ]
+        options = [o if tg_len(o) <= OPTION_MAX else _cut(o, OPTION_MAX) for o in options]
     if reveal != AnswerReveal.IMMEDIATE:
         return PollSpec(question, options, False, None, None, False, preface)
     if tq.correct_option not in opts:

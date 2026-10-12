@@ -13,13 +13,15 @@ from __future__ import annotations
 
 import logging
 import random
+import re
 from collections import Counter
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 
 from rapidfuzz import fuzz, process
 from sqlalchemy import func, select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.ai import prompts
 from app.ai.base import AIError, AIResponseError, LLMProvider
@@ -48,14 +50,17 @@ from app.schemas.ai import (
     SourceVerification,
     SourceVerificationBatch,
 )
-from app.services.question_validation import check_question, is_duplicate
+from app.services.dedup import DedupIndex, entry_for, key_hash, load_index, lock_inserts
+from app.services.question_validation import check_question
 from app.utils.text import normalize_topic, text_hash
 
 logger = logging.getLogger(__name__)
 
 ProgressCallback = Callable[[int, int], Awaitable[None]]
 
-MIXED_PLAN = ["medium", "easy", "medium", "hard", "medium", "easy", "hard", "medium", "easy", "medium"]
+# Target mix: half medium, half hard (no trivial recall questions). A target, not a quota: the
+# generator asks for the level that is behind, and the model may still label a question otherwise.
+MIXED_PLAN = ["medium", "hard"]
 
 
 @dataclass
@@ -103,6 +108,11 @@ class QuestionGenerator:
         self.retriever = retriever or Retriever()
         self.rng = rng or random.Random()
         self.settings = get_settings()
+        self._dedup: DedupIndex | None = None
+        self.duplicates: Counter = Counter()  # why candidates were found to be duplicates
+        # Rules the model offered again for a chunk (already in the bank, e.g. from another file):
+        # listed as covered in the next request for that chunk, so it moves on to new facts.
+        self._dup_facts: dict[int, list[str]] = {}
 
     # ------------------------------------------------------------------ public API
 
@@ -175,6 +185,24 @@ class QuestionGenerator:
         )
         return result
 
+    async def generate_from_chunk(
+        self, session: AsyncSession, chunk: SourceChunk, count: int, difficulties: list[str], option_count: int = 4
+    ) -> GenerationResult:
+        """Up to ``count`` new questions from this one chunk (deep generation walks the material
+        chunk by chunk). An AIError (API limit, outage) propagates to the caller."""
+        result = GenerationResult(rounds=1, seeds_available=1)
+        scope = (
+            SourceScope(material_ids=[chunk.material_id])
+            if chunk.material_id is not None
+            else SourceScope(news_ids=[chunk.news_id or 0])
+        )
+        request = GenerationRequest(scope=scope, count=count, option_count=option_count)
+        titles = await self._source_titles(session, [chunk])
+        result.questions = await self._generate_from_seed(session, chunk, request, count, difficulties, titles, result)
+        chunk.generation_attempts += 1
+        await session.commit()
+        return result
+
     async def regenerate_explanation(
         self, source_text: str, question: str, options: dict[str, str], correct: str
     ) -> str | None:
@@ -233,8 +261,19 @@ class QuestionGenerator:
         return name, name
 
     async def _existing_questions(self, session: AsyncSession, chunk_ids: list[int]) -> list[str]:
-        stmt = select(Question.question_text).where(Question.source_chunk_id.in_(chunk_ids)).limit(50)
-        return list((await session.execute(stmt)).scalars().all())
+        """What is already covered from these chunks: the tested rule when known, else the question."""
+        stmt = (
+            select(Question.fact, Question.question_text)
+            .where(Question.source_chunk_id.in_(chunk_ids), Question.status != QuestionStatus.REJECTED)
+            .order_by(Question.id.desc())
+            .limit(60)
+        )
+        return [fact or question for fact, question in await session.execute(stmt)]
+
+    async def _dedup_index(self, session: AsyncSession) -> DedupIndex:
+        if self._dedup is None:
+            self._dedup = await load_index(session)
+        return self._dedup
 
     async def _generate_from_seed(
         self,
@@ -254,7 +293,7 @@ class QuestionGenerator:
             titles.update(await self._source_titles(session, missing))
         by_id = {c.id: c for c in context}
         ctx = [prompts.ContextChunk(c.id, self._ref(c, titles)[0], c.text, *self._identity(c, titles)) for c in context]
-        existing = await self._existing_questions(session, list(by_id))
+        existing = self._dup_facts.get(seed.id, [])[-20:] + await self._existing_questions(session, list(by_id))
         topic_names = await self._topic_names(session)
 
         response = await structured_call(
@@ -283,7 +322,8 @@ class QuestionGenerator:
             return []
 
         pending: list[tuple[GeneratedQuestion, SourceChunk, float]] = []
-        seen = list(existing)
+        index = await self._dedup_index(session)
+        batch = DedupIndex()  # duplicates inside this one answer
         sources = [(c.id, c.text) for c in context]
         for item in response.questions[:n]:
             check = check_question(
@@ -302,8 +342,14 @@ class QuestionGenerator:
                     result.rejected[err] += 1
                 logger.info("Generated question failed checks", extra={"errors": ",".join(check.errors)})
                 continue
-            if is_duplicate(item.question, seen) or await self._hash_exists(session, item.question):
+            entry = entry_for(item.question, item.options.get(item.correct_answer, ""), item.fact,
+                              text_hash(item.question))  # fmt: skip
+            match = index.find(entry) or batch.find(entry)
+            if match is not None:
                 result.rejected["duplicate"] += 1
+                self.duplicates[match.reason] += 1
+                self._dup_facts.setdefault(seed.id, []).append((item.fact or item.question).strip())
+                logger.info("Duplicate question skipped", extra={"reason": match.reason, "of": match.question_id})
                 continue
             chunk = by_id[check.match.chunk_id]  # type: ignore[union-attr]
             # The source must be named and must be the document the excerpt really comes from.
@@ -314,7 +360,7 @@ class QuestionGenerator:
                 result.rejected["source_mismatch"] += 1
                 logger.info("Generated question names a different source", extra={"chunk_id": chunk.id})
                 continue
-            seen.append(item.question)
+            batch.add(entry)
             pending.append((item, chunk, check.match.score))  # type: ignore[union-attr]
 
         # All questions of this chunk are verified together: one blind source check and one quality
@@ -325,20 +371,38 @@ class QuestionGenerator:
             candidates.append(_Candidate(item, chunk, reference, kind, {**verified, "excerpt_score": score}))
         if not candidates:
             return []
+        vectors = await self._meaning_vectors(session, [c.data for c in candidates])
+        # Final check and insert under one lock: two jobs running at the same time cannot both save
+        # the same question (rows saved by the other job meanwhile are loaded first).
+        await lock_inserts(session)
+        await load_index(session, after_id=index.max_id, index=index)
         known_topics = list((await session.execute(select(Topic))).scalars().all())
         stored: list[Question] = []
-        for cand in candidates:
+        for cand, vec in zip(candidates, vectors, strict=True):
+            data = cand.data
+            answer = data.options.get(data.correct_answer, "")
+            entry = entry_for(data.question, answer, data.fact, text_hash(data.question), vec)
+            match = index.find(entry)
+            if match is not None:
+                result.rejected["duplicate"] += 1
+                self.duplicates[match.reason] += 1
+                self._dup_facts.setdefault(seed.id, []).append((data.fact or data.question).strip())
+                continue
+            options, correct, moved = self._shuffled(data)
+            verification = dict(cand.verification)
+            if verification.get("verifier_answer") in moved:  # keep it in the stored letters
+                verification["verifier_answer"] = moved[verification["verifier_answer"]]
             # The generator already picked the topic (from the existing topic list when one fits);
             # near-identical names are merged locally — no separate classification request.
-            topic = await get_or_create_topic(session, cand.data.topic, known_topics)
+            topic = await get_or_create_topic(session, data.topic, known_topics)
             question = Question(
-                question_text=cand.data.question.strip(),
-                options={k: v.strip() for k, v in cand.data.options.items()},
-                option_count=len(cand.data.options),
-                correct_option=cand.data.correct_answer,
-                explanation=cand.data.explanation.strip(),
+                question_text=data.question.strip(),
+                options=options,
+                option_count=len(options),
+                correct_option=correct,
+                explanation=data.explanation.strip(),
                 topic_id=topic.id if topic else None,
-                difficulty=Difficulty(cand.data.difficulty),
+                difficulty=Difficulty(data.difficulty),
                 status=QuestionStatus.PENDING,
                 origin=QuestionOrigin.AI,
                 source_kind=cand.kind,
@@ -347,19 +411,60 @@ class QuestionGenerator:
                 source_chunk_id=cand.chunk.id,
                 source_page=cand.chunk.page_label,
                 source_reference=cand.reference,
-                source_excerpt=cand.data.source_excerpt.strip(),
-                text_hash=text_hash(cand.data.question),
-                validation={**cand.verification, "model": self.llm.default_model},
+                source_excerpt=data.source_excerpt.strip(),
+                text_hash=text_hash(data.question),
+                article_ref=_checked_article(data.article, cand.chunk),
+                fact=data.fact.strip() or None,
+                fact_hash=entry.fact_hash,
+                answer_hash=key_hash(answer),
+                dedup_vec=vec,
+                validation={**verification, "model": self.llm.default_model},
                 confidence=cand.verification.get("confidence"),
             )
-            session.add(question)
+            try:
+                async with session.begin_nested():  # a unique index hit skips only this question
+                    session.add(question)
+            except IntegrityError:
+                result.rejected["duplicate"] += 1
+                self.duplicates["db_unique"] += 1
+                logger.warning("Duplicate blocked by the database", extra={"chunk_id": cand.chunk.id})
+                continue
+            entry.question_id = question.id
+            index.add(entry)
             stored.append(question)
-        await session.commit()
+        await session.commit()  # also releases the insert lock
         return stored
 
-    async def _hash_exists(self, session: AsyncSession, question: str) -> bool:
-        stmt = select(Question.id).where(Question.text_hash == text_hash(question)).limit(1)
-        return (await session.execute(stmt)).scalar_one_or_none() is not None
+    def _shuffled(self, data: GeneratedQuestion) -> tuple[dict[str, str], str, dict[str, str]]:
+        """Options in a random order, so the correct answer is not always in the same place; also
+        returns old letter → new letter. Kept as written when the explanation names a letter."""
+        options = {k: v.strip() for k, v in data.options.items()}
+        letters = list(options)
+        if re.search(r"\b[A-E]\)|\b[A-E] (variant|javob)|(variant|javob) [A-E]\b", data.explanation):
+            return options, data.correct_answer, {k: k for k in letters}
+        order = list(letters)
+        self.rng.shuffle(order)
+        shuffled = {letters[i]: options[orig] for i, orig in enumerate(order)}
+        moved = {orig: letters[i] for i, orig in enumerate(order)}
+        return shuffled, moved[data.correct_answer], moved
+
+    async def _meaning_vectors(self, session: AsyncSession, items: list[GeneratedQuestion]) -> list[list[float] | None]:
+        """Meaning vectors of "question + correct answer" for the semantic duplicate check (only when
+        the embedding model is available; otherwise the other checks still run)."""
+        from app.rag.embeddings import get_embedding_provider
+        from app.services import embedding_guard
+
+        provider = get_embedding_provider()
+        if not items or not provider.available:
+            return [None] * len(items)
+        texts = [f"{q.question} || {q.options.get(q.correct_answer, '')}" for q in items]
+        try:
+            async with embedding_guard.guard(async_sessionmaker(session.bind), provider):
+                vectors = await provider.embed_documents(texts)
+            return [[round(float(x), 5) for x in v] for v in vectors]
+        except Exception as exc:  # the meaning check is extra; never block saving on it
+            logger.warning("Meaning vectors unavailable", extra={"error": str(exc)[:200]})
+            return [None] * len(items)
 
     async def _source_verification(
         self, source_text: str, question: str, options: dict[str, str]
@@ -527,6 +632,16 @@ class QuestionGenerator:
                 )
             )
         return accepted
+
+
+def _checked_article(article: str, chunk: SourceChunk) -> str | None:
+    """The article/item reference only when its numbers really appear in the chunk (never guessed)."""
+    article = " ".join((article or "").split())[:120]
+    numbers = re.findall(r"\d+", article)
+    if not article or not numbers:
+        return None
+    haystack = f"{chunk.heading or ''} {chunk.text}"
+    return article if all(re.search(rf"(?<!\d){n}(?!\d)", haystack) for n in numbers) else None
 
 
 def _norm_source(value: str) -> str:

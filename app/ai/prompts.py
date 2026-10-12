@@ -72,8 +72,21 @@ QUESTION QUALITY REQUIREMENTS:
 - "explanation": 1-3 sentences explaining WHY the correct option is right, based only on the excerpt.
 - "topic": a short (1-4 words) subject area label, e.g. "Sud ishlarini yuritish", "Protsessual muddatlar".
   If one of the EXISTING TOPICS listed in the request fits, use it exactly as written.
-- "difficulty": easy = direct recall of a stated fact; medium = understanding/applying a rule;
-  hard = combining conditions or distinguishing close cases (still fully supported by the source).
+- "difficulty" is "medium" or "hard" (no trivial recall questions):
+  medium = understanding the content of an article/item: who does what, what, when, under which
+    condition and in which order; telling rules, deadlines, powers and legal requirements apart.
+    Not a question answered by copying one phrase of the text.
+  hard = analysing several related norms or conditions together; a short practical/legal situation
+    whose answer follows LOGICALLY from the norms in the source; telling similar powers, deadlines,
+    conditions and exceptions apart. Never add facts that are not in the source, never require a
+    conclusion the source does not support.
+- "fact": ONE short sentence stating exactly the rule or fact the question tests, in the source
+  language (e.g. "Sudya etib kamida 25 yoshga to'lgan fuqaro tayinlanadi"). Two questions with the
+  same "fact" test the same thing.
+- "article": the article / part / item number as written in the source for that rule, e.g.
+  "12-modda 2-qism" or "5-band"; an empty string if the source text does not show it. Never guess.
+- The explanation must not refer to option letters (A, B, ...): the options are shuffled later.
+- Each question in one answer must test a DIFFERENT fact.
 
 OUTPUT JSON SCHEMA:
 {{
@@ -86,7 +99,9 @@ OUTPUT JSON SCHEMA:
       "correct_answer": "A" | "B" | ...,
       "explanation": string,
       "topic": string,
-      "difficulty": "easy" | "medium" | "hard",
+      "difficulty": "medium" | "hard",
+      "fact": string,
+      "article": string,
       "source_chunk_id": integer,
       "source_reference": string,
       "source_excerpt": string,
@@ -120,8 +135,15 @@ def question_generation_user(
     if focus:
         lines.append(f"Focus on this subject if the source supports it: {focus}")
     if avoid_questions:
-        lines.append("Do NOT repeat or rephrase these existing questions:")
-        lines.extend(f"- {q[:150]}" for q in avoid_questions[:10])
+        lines.append(
+            "ALREADY COVERED (do NOT test these facts again, not even with other words; pick other "
+            "facts, articles, deadlines, powers, conditions or exceptions of the source):"
+        )
+        lines.extend(f"- {q[:160]}" for q in avoid_questions[:40])
+        lines.append(
+            'If the source has no other facts worth a good question, return {"status": "rejected", '
+            '"rejection_reason": "no new facts", "questions": []}.'
+        )
     if existing_topics:
         lines.append("EXISTING TOPICS: " + json.dumps(list(existing_topics)[:40], ensure_ascii=False))
     lines.append("\nSOURCE MATERIAL:\n" + render_context(chunks))

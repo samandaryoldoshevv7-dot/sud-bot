@@ -25,9 +25,10 @@ from app.handlers.admin.common import show
 from app.keyboards.callbacks import AdminCB
 from app.keyboards.common import back_menu_row, cancel_kb, confirm_kb, kb, pager
 from app.locales import t
-from app.models import FileType, Material, MaterialStatus, User
+from app.models import FileType, Material, MaterialGenerationJob, MaterialStatus, User
 from app.rag.vector_store import SourceScope
 from app.services import background, settings_service
+from app.services import deep_generation as deep
 from app.services import materials as material_service
 from app.services.ai_runtime import ai_available, make_generator
 from app.services.question_generation import GenerationRequest
@@ -424,6 +425,7 @@ async def render_material(target, session: AsyncSession, material_id: int, page:
         t("mat.detail.uploaded", d=fmt_dt(material.created_at)),
         t("mat.detail.stats", pages=material.page_count or "—", chunks=material.chunk_count, chars=material.char_count),
         t("mat.detail.questions", approved=qstats["approved"], pending=qstats["pending"], rejected=qstats["rejected"]),
+        *(await deep_stats_lines(session, material_id)),
         t("mat.detail.active", a=t("common.yes") if material.is_active else t("mat.archived")),
     ]
     if material.description:
@@ -440,6 +442,11 @@ async def render_material(target, session: AsyncSession, material_id: int, page:
     if material.status == MaterialStatus.READY and material.is_active:
         rows.append([(t("mat.btn.quick_test"), AdminCB(s="mat_qt", id=material.id))])
         rows.append([(t("mat.btn.generate"), AdminCB(s="mat_gen", id=material.id))])
+        job = await session.get(MaterialGenerationJob, material.id)
+        if job is None or job.status not in (deep.RUNNING, deep.EXHAUSTED, deep.DONE):
+            resume = job is not None and job.status in (deep.PAUSED, deep.INTERRUPTED)
+            label = t("mat.btn.deep_resume") if resume else t("mat.btn.deep", n=deep.MAX_QUESTIONS)
+            rows.append([(label, AdminCB(s="mat_deep", id=material.id))])
         rows.append([(t("mat.btn.questions"), AdminCB(s="qb_mat", id=material.id))])
     if material.status in (MaterialStatus.FAILED, MaterialStatus.READY, MaterialStatus.UPLOADED) or (
         material_service.is_stale(material)
@@ -639,6 +646,134 @@ def _friendly_error(error: str) -> str:
     if "invalid ai response" in lowered:
         return t("ai.err.invalid_response")
     return error[:200]
+
+
+# ------------------------------------------------------------------ 🧠 up to 300 questions from one material
+
+
+async def deep_stats_lines(session: AsyncSession, material_id: int) -> list[str]:
+    """Material page: how many questions, medium/hard, duplicates found, coverage and run state."""
+    stats = await deep.material_stats(session, material_id)
+    level = t("mat.deep.levels", m=stats.medium, h=stats.hard) + (
+        t("mat.deep.levels_easy", e=stats.easy) if stats.easy else ""
+    )
+    lines = ["", t("mat.deep.title"), t("mat.deep.total", n=stats.total) + " " + level]
+    job = stats.job
+    if job is not None:
+        lines.append(t("mat.deep.duplicates", n=job.duplicates))
+    if stats.chunks:
+        lines.append(t("mat.deep.coverage", done=stats.chunks_exhausted, total=stats.chunks))
+    if job is None:
+        lines.append(t("mat.deep.state_none", left=stats.remaining_chunks))
+    elif job.status == deep.RUNNING:
+        lines.append(t("mat.deep.state_running"))
+    elif job.status in (deep.PAUSED, deep.INTERRUPTED):
+        reason = _friendly_error(job.last_error or "") if job.last_error else "—"
+        if job.status == deep.INTERRUPTED:
+            reason = t("gen.reason.interrupted")
+        lines.append(t("mat.deep.state_paused", reason=esc(reason)))
+    elif job.status == deep.EXHAUSTED:
+        lines.append(t("mat.deep.state_exhausted", n=stats.total))
+    elif job.status == deep.DONE:
+        lines.append(t("mat.deep.state_done", n=stats.total))
+    return lines
+
+
+@router.callback_query(AdminCB.filter(F.s == "mat_deep"))
+async def cb_deep(
+    callback: CallbackQuery, callback_data: AdminCB, session: AsyncSession, session_maker, bot: Bot
+) -> None:
+    material = await session.get(Material, callback_data.id)
+    if material is None or material.status != MaterialStatus.READY:
+        await callback.answer(t("mat.not_ready"), show_alert=True)
+        return
+    if not ai_available():
+        await callback.answer(t("ai.not_configured"), show_alert=True)
+        return
+    job = await session.get(MaterialGenerationJob, material.id)
+    if job is not None and job.status == deep.RUNNING:
+        await callback.answer(t("mat.deep.already_running"), show_alert=True)
+        return
+    await callback.answer()
+    assert isinstance(callback.message, Message)
+    status = await callback.message.answer(t("mat.deep.started", title=esc(material.title), n=deep.MAX_QUESTIONS))
+    background.spawn(
+        run_deep_and_report(session_maker, bot, material.id, status.chat.id, status.message_id),
+        name=f"deep-generation-{material.id}",
+    )
+
+
+async def run_deep_and_report(
+    session_maker: async_sessionmaker[AsyncSession], bot: Bot, material_id: int, chat_id: int, message_id: int
+) -> None:
+    async with session_maker() as session:
+        material = await session.get(Material, material_id)
+        title = esc(material.title) if material else "?"
+    last = {"text": ""}
+
+    async def progress(have: int, target: int, done: int, chunks: int) -> None:
+        text = t("mat.deep.progress", title=title, have=have, target=target, done=done, chunks=chunks)
+        if text == last["text"]:
+            return
+        last["text"] = text
+        try:
+            await bot.edit_message_text(text, chat_id=chat_id, message_id=message_id)
+        except TelegramBadRequest:
+            pass
+
+    with ai_usage.track() as spent:
+        report = await deep.run(session_maker, material_id, make_generator, progress, notify_chat_id=chat_id)
+    text = deep_report_text(title, report)
+    if spent.requests or spent.cache_hits:
+        text += "\n\n" + usage_text(spent)
+    rows = []
+    if report.status in (deep.PAUSED, deep.INTERRUPTED):
+        rows.append([(t("mat.btn.deep_resume"), AdminCB(s="mat_deep", id=material_id))])
+    rows.append([(t("mat.btn.questions"), AdminCB(s="qb_mat", id=material_id))])
+    rows.append([(t("mat.btn.quick_test"), AdminCB(s="mat_qt", id=material_id))])
+    try:
+        await bot.edit_message_text(text, chat_id=chat_id, message_id=message_id, reply_markup=kb(*rows))
+    except TelegramBadRequest:
+        await bot.send_message(chat_id, text, reply_markup=kb(*rows))
+
+
+def deep_report_text(title: str, report: deep.DeepReport) -> str:
+    if report.error == "already_running":
+        return t("mat.deep.already_running")
+    lines = []
+    if report.status == deep.EXHAUSTED:
+        lines.append(t("mat.deep.done_exhausted", title=title, n=report.total, now=report.created_now))
+    elif report.status == deep.DONE:
+        lines.append(t("mat.deep.done_target", title=title, n=report.total, now=report.created_now))
+    elif report.status == deep.FAILED:
+        lines.append(t("mat.deep.failed", title=title))
+    else:
+        reason = _friendly_error(report.error or "") if report.error else "—"
+        lines.append(t("mat.deep.paused", title=title, n=report.total, now=report.created_now, reason=esc(reason)))
+    lines += [
+        "",
+        t("mat.deep.levels_line", m=report.medium, h=report.hard),
+        t("mat.deep.duplicates_now", n=report.duplicates_now),
+        t("mat.deep.rejected_now", n=report.rejected_now),
+    ]
+    return "\n".join(lines)
+
+
+async def notify_interrupted_deep(bot: Bot, session_maker: async_sessionmaker[AsyncSession], ids: list[int]) -> None:
+    """After a restart: tell the admins which runs stopped and offer to continue them."""
+    from app.services.notifications import notify_admins
+
+    for material_id in ids:
+        async with session_maker() as session:
+            material = await session.get(Material, material_id)
+            if material is None:
+                continue
+            stats = await deep.material_stats(session, material_id)
+        await notify_admins(
+            bot,
+            t("mat.deep.interrupted", title=esc(material.title), n=stats.total),
+            kb([(t("mat.btn.deep_resume"), AdminCB(s="mat_deep", id=material_id))]),
+        )
 
 
 # ------------------------------------------------------------------ ⚡ quick test from one material

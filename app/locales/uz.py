@@ -433,6 +433,44 @@ TEXTS: dict[str, str] = {
     "mat.btn.text_done": "✅ Matn tugadi, davom etish",
     "mat.btn.open": "📂 Materialni ochish",
     "mat.btn.generate": "🧠 Savollar yaratish (AI)",
+    "mat.btn.deep": "🧠 Maksimal savol yaratish ({n} tagacha)",
+    "mat.btn.deep_resume": "🔄 Savol yaratishni davom ettirish",
+    "mat.deep.title": "🧠 <b>Savollar banki (shu material)</b>",
+    "mat.deep.total": "Jami: <b>{n}</b> ta",
+    "mat.deep.levels": "(o'rtacha {m} · qiyin {h})",
+    "mat.deep.levels_easy": " · oson {e}",
+    "mat.deep.duplicates": "♻️ Takror deb topilib saqlanmagan: {n}",
+    "mat.deep.coverage": "📈 Qamrov: {done}/{total} bo'lak to'liq ishlangan",
+    "mat.deep.state_none": "Qolgan imkoniyat: {left} bo'lak hali to'liq ishlanmagan.",
+    "mat.deep.state_running": "⏳ Maksimal savol yaratish davom etmoqda…",
+    "mat.deep.state_paused": "⏸ To'xtatilgan: {reason}\nBu material tugaganini anglatmaydi — davom ettirsangiz, tuzilgan savollar qayta tuzilmaydi.",
+    "mat.deep.state_exhausted": "✅ Material to'liq qamrab olindi: {n} ta noyob savol. Qo'shimcha noyob savollar qolmadi.",
+    "mat.deep.state_done": "✅ {n} ta savol — chegaraga yetildi.",
+    "mat.deep.already_running": "⏳ Bu material bo'yicha savol yaratish allaqachon davom etmoqda.",
+    "mat.deep.started": (
+        "🧠 «{title}» bo'yicha savollar yaratilmoqda ({n} tagacha). Material qismlarga bo'linib, har bir modda, "
+        "band, muddat, vakolat va istisno o'qib chiqiladi. Har bir savol manbaga tekshiriladi va takrorlar "
+        "chiqarib tashlanadi. Bu uzoq davom etishi mumkin — natija shu xabarda chiqadi."
+    ),
+    "mat.deep.progress": "🧠 «{title}»: {have}/{target} ta savol · {done}/{chunks} bo'lak to'liq ishlangan",
+    "mat.deep.done_exhausted": (
+        "✅ «{title}»: materialdan <b>{n} ta</b> noyob va sifatli savol yaratildi (bu safar +{now}).\n"
+        "Material mazmuni bo'yicha qo'shimcha noyob savollar qolmadi."
+    ),
+    "mat.deep.done_target": "✅ «{title}»: <b>{n} ta</b> savol — chegaraga yetildi (bu safar +{now}).",
+    "mat.deep.paused": (
+        "⏸ «{title}»: <b>{n} ta</b> savol saqlandi (bu safar +{now}).\n\nJarayon to'xtadi: {reason}\n"
+        "Bu materialda savol qolmaganini anglatmaydi. «🔄 Savol yaratishni davom ettirish» ni bosing — "
+        "tuzilgan savollar qayta tuzilmaydi, ish to'xtagan joydan davom etadi."
+    ),
+    "mat.deep.failed": "❌ «{title}»: material tayyor emas — avval faylni qayta ishlang.",
+    "mat.deep.levels_line": "📊 O'rtacha: {m} · Qiyin: {h}",
+    "mat.deep.duplicates_now": "♻️ Takror deb topilib saqlanmagan: {n}",
+    "mat.deep.rejected_now": "🚫 Sifat yoki manba tekshiruvidan o'tmagan: {n}",
+    "mat.deep.interrupted": (
+        "⏸ «{title}» bo'yicha savol yaratish bot qayta ishga tushgani uchun to'xtadi. {n} ta savol saqlangan. "
+        "Davom ettirsangiz, ish to'xtagan joydan davom etadi."
+    ),
     "mat.btn.quick_test": "⚡ Shu materialdan test tuzish",
     "mat.quick_test_count": "⚡ <b>{title}</b> asosida test.\n\nNechta savol bo'lsin? Savollar faqat shu material matnidan olinadi.",
     "mat.quick_test_where": "Test qayerda ishlanadi?\n(Muddat: e'lon qilingandan boshlab 24 soat, natija test oxirida ko'rsatiladi.)",

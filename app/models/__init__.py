@@ -22,7 +22,7 @@ from app.models.enums import (
     UserStatus,
 )
 from app.models.material import Material, News, SourceChunk
-from app.models.question import Question, Topic
+from app.models.question import MaterialGenerationJob, Question, Topic
 from app.models.setting import BotSetting
 from app.models.test import (
     GroupQuestionMessage,
@@ -55,6 +55,7 @@ __all__ = [
     "GroupQuestionMessage",
     "GroupTestPost",
     "Material",
+    "MaterialGenerationJob",
     "MaterialStatus",
     "News",
     "ParticipationStatus",
