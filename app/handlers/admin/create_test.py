@@ -59,7 +59,10 @@ router = Router(name="admin_create_test")
 COUNTS = (10, 20, 30, 40, 50)
 VARIANT_CHOICES = (1, 2, 3, 4, 5)
 # 📦 Up to this many questions in all, split into tests of the chosen size (300 → 6 × 50, 10 × 30).
-PACK_TOTAL = 300
+# One file gives at most PER_SOURCE (🧠 limit), so the bigger totals need several files.
+PACK_TOTALS = (300, 500, 700, 1000)
+PACK_TOTAL = PACK_TOTALS[0]
+PER_SOURCE = 300
 MAX_TEST_QUESTIONS = tb.MAX_TEST_QUESTIONS
 USERS_PAGE = 8
 MATERIAL_ICON = {
@@ -112,9 +115,50 @@ async def on_title(message: Message, state: FSMContext, session: AsyncSession, u
     )
     await state.set_state(CreateStates.files)
     await state.update_data(ct_test=test.id)
+    ready = await _ready_material_count(session)
+    rows = [[(t("ct.btn.all_materials", n=ready), AdminCB(s="ct_all", id=test.id))]] if ready else []
     await message.answer(
         t("ct.ask_files", mb=get_settings().max_file_size_mb, title=esc(title)),
-        reply_markup=kb(_cancel_row(test.id)),
+        reply_markup=kb(*rows, _cancel_row(test.id)),
+    )
+
+
+async def _ready_material_count(session: AsyncSession) -> int:
+    return len(await _ready_materials(session))
+
+
+async def _ready_materials(session: AsyncSession) -> list[Material]:
+    stmt = (
+        select(Material)
+        .where(Material.status == MaterialStatus.READY, Material.is_active.is_(True))
+        .order_by(Material.id)
+    )
+    return list((await session.execute(stmt)).scalars().all())
+
+
+@router.callback_query(AdminCB.filter(F.s == "ct_all"))
+async def cb_all_materials(callback: CallbackQuery, callback_data: AdminCB, session: AsyncSession) -> None:
+    """📚 Barcha materiallardan: every ready material becomes a source of this test (mixed evenly)."""
+    test = await _draft(callback, session, callback_data.id)
+    if test is None:
+        return
+    materials = await _ready_materials(session)
+    if not materials:
+        await callback.answer(t("ct.no_materials"), show_alert=True)
+        return
+    for material in materials:
+        await tb.ensure_source(session, test.id, material)
+    await session.commit()
+    await callback.answer(t("ct.all_added", n=len(materials)))
+    text, _ = await _files_text(session, test.id)
+    await show(callback, text, _files_kb(test.id))
+
+
+def _files_kb(test_id: int):
+    return kb(
+        [(t("ct.btn.mix"), AdminCB(s="ct_mix", id=test_id))],
+        [(t("btn.refresh"), AdminCB(s="ct_files", id=test_id))],
+        _cancel_row(test_id),
     )
 
 
@@ -312,18 +356,25 @@ async def _set_count(target, session: AsyncSession, test_id: int, count: int) ->
     test.question_count = count
     await session.commit()
     rows = [[(str(n), AdminCB(s="ct_vn", id=test_id, v=str(n))) for n in VARIANT_CHOICES]]
-    parts = PACK_TOTAL // count
-    if parts >= 2:
-        rows.append(
-            [(t("ct.btn.pack", parts=parts, q=count, total=parts * count), AdminCB(s="ct_vn", id=test_id, v="max"))]
-        )
+    for total in await pack_totals(session, test_id):
+        parts = total // count
+        if parts >= 2:
+            rows.append(
+                [(t("ct.btn.pack", parts=parts, q=count, total=total), AdminCB(s="ct_vn", id=test_id, v=f"max{total}"))]
+            )
     await show(target, t("ct.ask_variants", n=count), kb(*rows, _cancel_row(test_id)))
+
+
+async def pack_totals(session: AsyncSession, test_id: int) -> list[int]:
+    """📦 totals the test's files can hold: 300 always, more with more files (≤ 300 per file)."""
+    files = max(1, len(await tb.source_names(session, test_id)))
+    return [n for n in PACK_TOTALS if n == PACK_TOTALS[0] or n <= files * PER_SOURCE]
 
 
 async def variant_count(session: AsyncSession, test_id: int) -> int:
     row = await session.get(BotSetting, f"ct_variants:{test_id}")
     try:
-        return max(1, min(int(row.value), PACK_TOTAL)) if row is not None else 1
+        return max(1, min(int(row.value), max(PACK_TOTALS))) if row is not None else 1
     except (TypeError, ValueError):
         return 1
 
@@ -339,8 +390,13 @@ async def cb_variants(callback: CallbackQuery, callback_data: AdminCB, session: 
     test = await _draft(callback, session, callback_data.id)
     if test is None:
         return
-    if callback_data.v == "max":
-        parts = PACK_TOTAL // max(1, test.question_count)
+    if (callback_data.v or "").startswith("max"):
+        total = (
+            int(callback_data.v[3:] or PACK_TOTAL) if callback_data.v[3:].isdigit() or not callback_data.v[3:] else 0
+        )
+        if total not in await pack_totals(session, test.id):
+            return
+        parts = total // max(1, test.question_count)
         if parts < 2:
             return
         await session.merge(BotSetting(key=f"ct_variants:{test.id}", value=parts))
