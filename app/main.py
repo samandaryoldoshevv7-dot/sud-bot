@@ -176,6 +176,9 @@ async def run() -> None:
     from app.handlers.admin.materials import resume_interrupted_materials
 
     background.spawn(resume_interrupted_materials(bot, get_session_maker()), name="resume-materials")
+    from app.handlers.admin.materials import resume_waiting_deep
+
+    background.spawn(resume_waiting_deep(bot, get_session_maker()), name="resume-deep-waits")
     allowed = dp.resolve_used_update_types()
     if "chat_member" not in allowed:
         allowed.append("chat_member")

@@ -304,10 +304,14 @@ async def prefill_bank(
     generator_factory: GeneratorFactory | None,
     progress: Callable[[int, int], Awaitable[None]] | None = None,
     wait_timeout: float = 900,
+    wait_for_limit: Callable[[int, int, int], Awaitable[bool]] | None = None,
 ) -> PrefillReport:
     """📦 Before a test is split into many parts: make sure the bank holds ``needed`` unused questions
     of the test's files (shared evenly), generating the shortfall with 🧠 deep generation — unique,
-    medium/hard, never padded. Returns what is available; less when the files have no more."""
+    medium/hard, never padded. Returns what is available; less when the files have no more.
+
+    ``wait_for_limit(minutes, have, needed)``: when the AI limits run out, wait that long and go on
+    (return False to stop); without it the filling stops at the first limit."""
     from app.services import deep_generation as deep
 
     report = PrefillReport()
@@ -354,9 +358,21 @@ async def prefill_bank(
                 if progress:
                     await progress(before + max(0, done - base), needed)
 
-            result = await deep.run(session_maker, mid, generator_factory, step, target=target)
-            report.created += result.created_now
-            have = await available()
+            idle = 0
+            while True:
+                result = await deep.run(session_maker, mid, generator_factory, step, target=target)
+                report.created += result.created_now
+                have = await available()
+                idle = 0 if result.created_now else idle + 1
+                wait = deep.auto_wait_minutes(result)
+                if (
+                    wait is None
+                    or wait_for_limit is None
+                    or idle > deep.AUTO_IDLE_ROUNDS
+                    or sum(have.values()) >= needed
+                    or not await wait_for_limit(wait, sum(have.values()), needed)
+                ):
+                    break
             if result.status in (deep.PAUSED, deep.FAILED) and result.error != "already_running":
                 report.error = result.error or result.status
                 break

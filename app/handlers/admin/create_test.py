@@ -7,9 +7,11 @@ bot restart loses nothing.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import tempfile
+from datetime import timedelta
 from pathlib import Path
 
 from aiogram import Bot, F, Router
@@ -49,7 +51,7 @@ from app.services.ai_runtime import ai_available, make_generator
 from app.services.mixed_tests import build_mixed_test, prefill_bank
 from app.services.scheduler import launch_test
 from app.utils.text import esc, sha256_bytes, truncate
-from app.utils.time import fmt_hours, utcnow
+from app.utils.time import fmt_dt, fmt_hours, utcnow
 
 logger = logging.getLogger(__name__)
 router = Router(name="admin_create_test")
@@ -637,10 +639,22 @@ async def _build_variants(
                 except TelegramBadRequest:
                     pass
 
+            async def wait_for_limit(minutes: int, have: int, need: int) -> bool:
+                """AI limits are out: show when it goes on, wait, go on (only waiting, no bypass)."""
+                at = utcnow() + timedelta(minutes=minutes, seconds=30)
+                try:
+                    await bot.edit_message_text(t("ct.pack_waiting", have=have, need=need, m=minutes, at=fmt_dt(at)),
+                                                chat_id=chat_id, message_id=message_id)  # fmt: skip
+                except TelegramBadRequest:
+                    pass
+                await asyncio.sleep(max(0.0, (at - utcnow()).total_seconds()))
+                return True
+
             await fill_progress(0, variants * size)
             filled = await prefill_bank(
-                session_maker, test_id, variants * size, make_generator if ai_available() else None, fill_progress
-            )
+                session_maker, test_id, variants * size, make_generator if ai_available() else None, fill_progress,
+                wait_for_limit=wait_for_limit,
+            )  # fmt: skip
             full = filled.available // size
             if full < variants:
                 # Only as many tests as there are unique questions (a part-filled last one is offered).

@@ -344,3 +344,62 @@ async def test_pack_makes_unique_questions_then_splits_them_into_tests(tg, sessi
             seen |= set(ids)
         assert len(seen) == 55
         assert await session.get(BotSetting, f"ct_pack:{draft_id}") is None
+
+
+async def test_run_waits_for_the_ai_limit_and_continues_by_itself(tg, session_maker, monkeypatch):  # noqa: F811
+    """The AI limit runs out: the admin sees when the bot continues (time), it waits and continues
+    by itself, and a new message tells the admin when the material is used up."""
+    from app.handlers.admin import materials as mat
+    from app.models import BotSetting
+
+    mid = await make_material_with_text(session_maker, law_text(12), title="Qonun", file_name="qonun.pdf")
+    llm = FactLLM(limit_after=2)
+    monkeypatch.setattr(mat, "make_generator", factory(llm))
+    waits = []
+
+    async def fake_wait(session_maker_, material_id, at):
+        async with session_maker_() as session:
+            row = await session.get(BotSetting, f"deep_auto:{material_id}")
+            assert row is not None and row.value["chat"] == ADMIN  # remembered across a restart
+        waits.append(at)
+        llm.limit_after = None  # the limit is back
+        return True
+
+    monkeypatch.setattr(mat, "_wait_until", fake_wait)
+    async with session_maker() as session:
+        await make_employee(session, ADMIN, "Admin Bosh")
+    msg = await tg.bot.send_message(ADMIN, "⏳")
+    tg.session.clear()
+    await mat.run_deep_and_report(session_maker, tg.bot, mid, ADMIN, msg.message_id)
+    texts = tg.session.texts()
+    assert len(waits) == 1
+    wait_text = next(x for x in texts if "avtomatik davom etadi" in x)
+    assert "42 daqiqadan keyin" in wait_text and "6/300" in wait_text
+    assert "<b>12 ta</b> noyob" in texts[-1]  # the final report, a new message
+    async with session_maker() as session:
+        assert len((await session.execute(select(Question))).unique().scalars().all()) == 12
+        assert await session.get(BotSetting, f"deep_auto:{mid}") is None
+
+
+async def test_stop_button_ends_the_waiting(tg, session_maker, monkeypatch):  # noqa: F811
+    from app.handlers.admin import materials as mat
+
+    mid = await make_material_with_text(session_maker, law_text(12), title="Qonun", file_name="qonun.pdf")
+    monkeypatch.setattr(mat, "make_generator", factory(FactLLM(limit_after=1)))
+    monkeypatch.setattr(mat, "AUTO_POLL_SECONDS", 0.05)
+    async with session_maker() as session:
+        await make_employee(session, ADMIN, "Admin Bosh")
+    msg = await tg.bot.send_message(ADMIN, "⏳")
+    task = asyncio.create_task(mat.run_deep_and_report(session_maker, tg.bot, mid, ADMIN, msg.message_id))
+    for _ in range(100):
+        if await mat._auto_get(session_maker, mid):
+            break
+        await asyncio.sleep(0.05)
+    await tg(callback_update(ADMIN, AdminCB(s="mat_v", id=mid).pack()))
+    page = tg.session.texts()[-1]
+    assert "o'zi davom ettiradi" in page
+    buttons = [b.text for row in tg.session.last_markup().inline_keyboard for b in row]
+    assert "⏹ Avtomatik davom ettirishni to'xtatish" in buttons and "▶️ Hozir davom ettirish" in buttons
+    await tg(callback_update(ADMIN, AdminCB(s="mat_deep_stop", id=mid).pack()))
+    await asyncio.wait_for(task, 5)
+    assert "avtomatik davom ettirish to'xtatildi" in tg.session.texts()[-1]

@@ -15,6 +15,7 @@ states, so the admin is never told a material is used up when only the AI quota 
 from __future__ import annotations
 
 import logging
+import re
 from collections import Counter
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -336,3 +337,24 @@ async def _run(
         )
         await session.commit()
         report.status = DONE if have >= target else EXHAUSTED
+
+
+AUTO_WAIT_DEFAULT_MIN = 15  # a limit that did not say when it ends
+AUTO_WAIT_MAX_MIN = 24 * 60
+AUTO_IDLE_ROUNDS = 6  # waits in a row that brought no new question: stop waiting, tell the admin
+
+
+def auto_wait_minutes(report: DeepReport) -> int | None:
+    """How long to wait before continuing by itself, or None when waiting would not help
+    (finished, exhausted, wrong key, no AI configured…). Only waiting: limits are never bypassed."""
+    if report.status not in (PAUSED, INTERRUPTED) or not report.error:
+        return None
+    lowered = report.error.lower()
+    if any(m in lowered for m in ("authentication", "not configured", "no ai api key", "material_not_ready")):
+        return None
+    match = re.search(r"retry in (\d+) min", lowered)
+    if match:
+        return max(1, min(int(match.group(1)), AUTO_WAIT_MAX_MIN))
+    if any(m in lowered for m in ("rate limit", "unavailable", "unreachable", "timeout", "temporarily")):
+        return AUTO_WAIT_DEFAULT_MIN
+    return AUTO_WAIT_DEFAULT_MIN  # an unexpected error: one more try after a pause
