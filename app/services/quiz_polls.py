@@ -47,40 +47,18 @@ class PollSpec:
     preface: str | None = None
 
 
-def _cut_words(text: str, limit: int) -> str:
-    """Shorten to ``limit`` Telegram characters at a word boundary, ending with "…"."""
-    cut = _cut(text, limit)
-    head = cut[:-1].rstrip()
-    if " " in head and len(head) > limit // 2:
-        head = head.rsplit(" ", 1)[0].rstrip(" ,;:—-")
-    return head + "…"
-
-
 def _explanation(tq: TestQuestion) -> tuple[str | None, bool]:
-    """Text under the 💡 of the poll (Telegram allows 200 characters). The explanation comes first:
-    when it and the source do not fit together, the source line is left out (it is in the results);
-    an explanation longer than 200 is cut at a word and sent in full after the answer."""
-    source = t("quiz.poll_explanation_source", s=" ".join(tq.source_name.split())) if tq.source_name else None
-    expl = t("quiz.poll_explanation", text=" ".join(tq.explanation.split())) if tq.explanation else None
-    parts = [p for p in (source, expl) if p]
+    parts = []
+    if tq.source_name:
+        parts.append(t("quiz.poll_explanation_source", s=" ".join(tq.source_name.split())))
+    if tq.explanation:
+        parts.append(t("quiz.poll_explanation", text=" ".join(tq.explanation.split())))
     if not parts:
         return None, False
     text = "\n".join(parts)
     if tg_len(text) <= EXPLANATION_MAX:
         return text, False
-    if expl is None:
-        return _cut(text, EXPLANATION_MAX), False
-    if tg_len(expl) <= EXPLANATION_MAX:
-        return expl, False
-    return _cut_words(expl, EXPLANATION_MAX), True
-
-
-def full_explanation(tq: TestQuestion) -> str:
-    """The whole explanation as a message (when the poll could show only part of it)."""
-    lines = [t("quiz.full_explanation", text=esc(" ".join((tq.explanation or "").split())))]
-    if tq.source_name:
-        lines.append(t("quiz.full_explanation_source", s=esc(" ".join(tq.source_name.split()))))
-    return "\n".join(lines)
+    return _cut(text, EXPLANATION_MAX), True
 
 
 def build(attempt: TestAttempt, tq: TestQuestion, item: dict, position: int, reveal: AnswerReveal) -> PollSpec | None:
