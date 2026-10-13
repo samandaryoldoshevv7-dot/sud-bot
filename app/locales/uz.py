@@ -281,6 +281,10 @@ TEXTS: dict[str, str] = {
         "nechta to'liq test chiqsa, shuncha tuziladi."
     ),
     "ct.pack_filling": "🧠 Fayllardan noyob savollar tuzilmoqda: {have}/{need}…",
+    "ct.pack_waiting": (
+        "⏸ Tayyor: <b>{have}/{need}</b> ta noyob savol. AI xizmatlarining limiti tugadi.\n"
+        "⏳ Bot o'zi kutadi va <b>{m} daqiqadan keyin — {at} da</b> davom etadi; tugagach testlar tuzilib yuboriladi."
+    ),
     "ct.pack_exhausted": "fayllarda boshqa noyob savol qolmadi",
     "ct.pack_short": "ℹ️ Fayllardan jami <b>{available} ta</b> noyob savol chiqdi ({reason}), shuning uchun testlar soni shunga moslandi.",
     "ct.variant_title": "{title} — {k}-variant",
@@ -476,6 +480,20 @@ TEXTS: dict[str, str] = {
     "mat.deep.levels_line": "📊 O'rtacha: {m} · Qiyin: {h}",
     "mat.deep.duplicates_now": "♻️ Takror deb topilib saqlanmagan: {n}",
     "mat.deep.rejected_now": "🚫 Sifat yoki manba tekshiruvidan o'tmagan: {n}",
+    "mat.btn.deep_stop": "⏹ Avtomatik davom ettirishni to'xtatish",
+    "mat.btn.deep_now": "▶️ Hozir davom ettirish",
+    "mat.deep.auto_wait": (
+        "⏸ «{title}»: <b>{n}/{target}</b> ta savol tayyor.\n\n{reason}\n\n"
+        "⏳ Bot o'zi kutadi va <b>{m} daqiqadan keyin — {at} da</b> avtomatik davom etadi. "
+        "Hech narsa bosish shart emas; tugagach yoki material tugaganda xabar keladi."
+    ),
+    "mat.deep.auto_resumed": "▶️ «{title}»: AI limiti tiklandi, savol yaratish davom etmoqda ({n}/{target})…",
+    "mat.deep.auto_now": "▶️ Hozir davom ettirilmoqda.",
+    "mat.deep.auto_stopped": "⏹ Avtomatik davom ettirish to'xtatildi. Tuzilgan savollar saqlangan.",
+    "mat.deep.stopped": "⏹ «{title}»: avtomatik davom ettirish to'xtatildi. Saqlangan savollar: <b>{n} ta</b>.",
+    "mat.deep.finished_short": "🧠 «{title}»: jarayon yakunlandi — natija pastdagi xabarda.",
+    "mat.deep.state_waiting": "⏳ AI limiti tugagan — bot <b>{at}</b> da o'zi davom ettiradi.",
+    "mat.deep.interrupted_auto": "🔄 Bot qayta ishga tushdi. «{title}» bo'yicha savol yaratish o'zi davom etmoqda ({n} ta saqlangan)…",
     "mat.deep.interrupted": (
         "⏸ «{title}» bo'yicha savol yaratish bot qayta ishga tushgani uchun to'xtadi. {n} ta savol saqlangan. "
         "Davom ettirsangiz, ish to'xtagan joydan davom etadi."

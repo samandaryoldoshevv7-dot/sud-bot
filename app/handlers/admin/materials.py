@@ -7,6 +7,7 @@ import logging
 import os
 import re
 import tempfile
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from aiogram import Bot, F, Router
@@ -25,7 +26,7 @@ from app.handlers.admin.common import show
 from app.keyboards.callbacks import AdminCB
 from app.keyboards.common import back_menu_row, cancel_kb, confirm_kb, kb, pager
 from app.locales import t
-from app.models import FileType, Material, MaterialGenerationJob, MaterialStatus, User
+from app.models import BotSetting, FileType, Material, MaterialGenerationJob, MaterialStatus, User
 from app.rag.vector_store import SourceScope
 from app.services import background, settings_service
 from app.services import deep_generation as deep
@@ -33,7 +34,7 @@ from app.services import materials as material_service
 from app.services.ai_runtime import ai_available, make_generator
 from app.services.question_generation import GenerationRequest
 from app.utils.text import esc, sha256_bytes, truncate
-from app.utils.time import fmt_dt
+from app.utils.time import fmt_dt, utcnow
 
 logger = logging.getLogger(__name__)
 router = Router(name="admin_materials")
@@ -443,7 +444,10 @@ async def render_material(target, session: AsyncSession, material_id: int, page:
         rows.append([(t("mat.btn.quick_test"), AdminCB(s="mat_qt", id=material.id))])
         rows.append([(t("mat.btn.generate"), AdminCB(s="mat_gen", id=material.id))])
         job = await session.get(MaterialGenerationJob, material.id)
-        if job is None or job.status not in (deep.RUNNING, deep.EXHAUSTED, deep.DONE):
+        if await _auto_value(session, material.id):
+            rows.append([(t("mat.btn.deep_now"), AdminCB(s="mat_deep", id=material.id))])
+            rows.append([(t("mat.btn.deep_stop"), AdminCB(s="mat_deep_stop", id=material.id))])
+        elif job is None or job.status not in (deep.RUNNING, deep.EXHAUSTED, deep.DONE):
             resume = job is not None and job.status in (deep.PAUSED, deep.INTERRUPTED)
             label = t("mat.btn.deep_resume") if resume else t("mat.btn.deep", n=deep.MAX_QUESTIONS)
             rows.append([(label, AdminCB(s="mat_deep", id=material.id))])
@@ -651,6 +655,15 @@ def _friendly_error(error: str) -> str:
 # ------------------------------------------------------------------ 🧠 up to 300 questions from one material
 
 
+async def _auto_value(session: AsyncSession, material_id: int) -> str | None:
+    """ "13.10.2026 01:25" when the run waits for an AI limit and will continue by itself."""
+    row = await session.get(BotSetting, AUTO_KEY.format(material_id))
+    try:
+        return fmt_dt(datetime.fromisoformat(row.value["at"])) if row is not None else None
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
 async def deep_stats_lines(session: AsyncSession, material_id: int) -> list[str]:
     """Material page: how many questions, medium/hard, duplicates found, coverage and run state."""
     stats = await deep.material_stats(session, material_id)
@@ -667,6 +680,8 @@ async def deep_stats_lines(session: AsyncSession, material_id: int) -> list[str]
         lines.append(t("mat.deep.state_none", left=stats.remaining_chunks))
     elif job.status == deep.RUNNING:
         lines.append(t("mat.deep.state_running"))
+    elif job.status in (deep.PAUSED, deep.INTERRUPTED) and (auto := await _auto_value(session, material_id)):
+        lines.append(t("mat.deep.state_waiting", at=esc(auto)))
     elif job.status in (deep.PAUSED, deep.INTERRUPTED):
         reason = _friendly_error(job.last_error or "") if job.last_error else "—"
         if job.status == deep.INTERRUPTED:
@@ -694,6 +709,13 @@ async def cb_deep(
     if job is not None and job.status == deep.RUNNING:
         await callback.answer(t("mat.deep.already_running"), show_alert=True)
         return
+    waiting = await session.get(BotSetting, AUTO_KEY.format(material.id))
+    if waiting is not None and isinstance(waiting.value, dict):
+        # Already waiting for an AI limit: continue right now instead of starting a second run.
+        waiting.value = {**waiting.value, "at": utcnow().isoformat()}
+        await session.commit()
+        await callback.answer(t("mat.deep.auto_now"), show_alert=True)
+        return
     await callback.answer()
     assert isinstance(callback.message, Message)
     status = await callback.message.answer(t("mat.deep.started", title=esc(material.title), n=deep.MAX_QUESTIONS))
@@ -703,26 +725,84 @@ async def cb_deep(
     )
 
 
+AUTO_KEY = "deep_auto:{}"  # the run waits for an AI limit and continues by itself at this time
+AUTO_POLL_SECONDS = 20.0
+
+
+async def _auto_get(session_maker: async_sessionmaker[AsyncSession], material_id: int) -> dict | None:
+    async with session_maker() as session:
+        row = await session.get(BotSetting, AUTO_KEY.format(material_id))
+        return row.value if row is not None and isinstance(row.value, dict) else None
+
+
+async def _auto_set(session_maker: async_sessionmaker[AsyncSession], material_id: int, value: dict | None) -> None:
+    async with session_maker() as session:
+        row = await session.get(BotSetting, AUTO_KEY.format(material_id))
+        if value is None:
+            if row is not None:
+                await session.delete(row)
+        else:
+            await session.merge(BotSetting(key=AUTO_KEY.format(material_id), value=value))
+        await session.commit()
+
+
+async def _wait_until(session_maker: async_sessionmaker[AsyncSession], material_id: int, at: datetime) -> bool:
+    """Sleep until ``at``; False when the admin pressed ⏹ meanwhile."""
+    while True:
+        if await _auto_get(session_maker, material_id) is None:
+            return False
+        left = (at - utcnow()).total_seconds()
+        if left <= 0:
+            return True
+        await asyncio.sleep(min(AUTO_POLL_SECONDS, left))
+
+
 async def run_deep_and_report(
     session_maker: async_sessionmaker[AsyncSession], bot: Bot, material_id: int, chat_id: int, message_id: int
 ) -> None:
+    """Runs 🧠 to the end: when the AI limits run out it waits (the time is shown) and continues by
+    itself, as often as needed; the admin gets a new message when it is finished or used up."""
     async with session_maker() as session:
         material = await session.get(Material, material_id)
         title = esc(material.title) if material else "?"
     last = {"text": ""}
 
-    async def progress(have: int, target: int, done: int, chunks: int) -> None:
-        text = t("mat.deep.progress", title=title, have=have, target=target, done=done, chunks=chunks)
-        if text == last["text"]:
+    async def edit(text: str, markup=None) -> None:
+        if text == last["text"] and markup is None:
             return
         last["text"] = text
         try:
-            await bot.edit_message_text(text, chat_id=chat_id, message_id=message_id)
+            await bot.edit_message_text(text, chat_id=chat_id, message_id=message_id, reply_markup=markup)
         except TelegramBadRequest:
             pass
 
+    async def progress(have: int, target: int, done: int, chunks: int) -> None:
+        await edit(t("mat.deep.progress", title=title, have=have, target=target, done=done, chunks=chunks))
+
+    created_total, idle_rounds = 0, 0
     with ai_usage.track() as spent:
-        report = await deep.run(session_maker, material_id, make_generator, progress, notify_chat_id=chat_id)
+        while True:
+            report = await deep.run(session_maker, material_id, make_generator, progress, notify_chat_id=chat_id)
+            created_total += report.created_now
+            idle_rounds = 0 if report.created_now else idle_rounds + 1
+            wait = deep.auto_wait_minutes(report)
+            if wait is None or idle_rounds > deep.AUTO_IDLE_ROUNDS or report.error == "already_running":
+                break
+            resume_at = utcnow() + timedelta(minutes=wait, seconds=30)
+            await _auto_set(session_maker, material_id, {"at": resume_at.isoformat(), "chat": chat_id})
+            reason = _friendly_error(report.error or "")
+            await edit(
+                t("mat.deep.auto_wait", title=title, n=report.total, target=report.target, m=wait,
+                  at=fmt_dt(resume_at), reason=esc(reason)),
+                kb([(t("mat.btn.deep_stop"), AdminCB(s="mat_deep_stop", id=material_id))]),
+            )  # fmt: skip
+            if not await _wait_until(session_maker, material_id, resume_at):
+                report.error = "stopped_by_admin"
+                break
+            await _auto_set(session_maker, material_id, None)
+            await edit(t("mat.deep.auto_resumed", title=title, n=report.total, target=report.target))
+    await _auto_set(session_maker, material_id, None)
+    report.created_now = created_total
     text = deep_report_text(title, report)
     if spent.requests or spent.cache_hits:
         text += "\n\n" + usage_text(spent)
@@ -731,15 +811,50 @@ async def run_deep_and_report(
         rows.append([(t("mat.btn.deep_resume"), AdminCB(s="mat_deep", id=material_id))])
     rows.append([(t("mat.btn.questions"), AdminCB(s="qb_mat", id=material_id))])
     rows.append([(t("mat.btn.quick_test"), AdminCB(s="mat_qt", id=material_id))])
+    await edit(t("mat.deep.finished_short", title=title))
+    # A new message (not an edit), so the admin is notified even hours later.
+    await bot.send_message(chat_id, text, reply_markup=kb(*rows))
+
+
+@router.callback_query(AdminCB.filter(F.s == "mat_deep_stop"))
+async def cb_deep_stop(callback: CallbackQuery, callback_data: AdminCB, session_maker) -> None:
+    await _auto_set(session_maker, callback_data.id, None)
+    await callback.answer(t("mat.deep.auto_stopped"), show_alert=True)
+
+
+async def resume_waiting_deep(bot: Bot, session_maker: async_sessionmaker[AsyncSession]) -> None:
+    """At startup: runs that were waiting for an AI limit keep waiting and then continue."""
+    async with session_maker() as session:
+        rows = (await session.execute(select(BotSetting).where(BotSetting.key.like("deep_auto:%")))).scalars().all()
+        waiting = [(int(r.key.split(":", 1)[1]), r.value) for r in rows if isinstance(r.value, dict)]
+    for material_id, value in waiting:
+        background.spawn(_resume_after_wait(bot, session_maker, material_id, value), name=f"deep-wait-{material_id}")
+
+
+async def _resume_after_wait(
+    bot: Bot, session_maker: async_sessionmaker[AsyncSession], material_id: int, value: dict
+) -> None:
     try:
-        await bot.edit_message_text(text, chat_id=chat_id, message_id=message_id, reply_markup=kb(*rows))
-    except TelegramBadRequest:
-        await bot.send_message(chat_id, text, reply_markup=kb(*rows))
+        at, chat_id = datetime.fromisoformat(value["at"]), int(value["chat"])
+    except (KeyError, TypeError, ValueError):
+        await _auto_set(session_maker, material_id, None)
+        return
+    if not await _wait_until(session_maker, material_id, at):
+        return
+    async with session_maker() as session:
+        material = await session.get(Material, material_id)
+        title = esc(material.title) if material else "?"
+    status = await bot.send_message(chat_id, t("mat.deep.auto_resumed", title=title, n="…", target=deep.MAX_QUESTIONS))
+    await run_deep_and_report(session_maker, bot, material_id, chat_id, status.message_id)
 
 
 def deep_report_text(title: str, report: deep.DeepReport) -> str:
     if report.error == "already_running":
         return t("mat.deep.already_running")
+    if report.error == "stopped_by_admin":
+        report.error = None
+        return "\n".join([t("mat.deep.stopped", title=title, n=report.total), "",
+                          t("mat.deep.levels_line", m=report.medium, h=report.hard)])  # fmt: skip
     lines = []
     if report.status == deep.EXHAUSTED:
         lines.append(t("mat.deep.done_exhausted", title=title, n=report.total, now=report.created_now))
@@ -760,19 +875,30 @@ def deep_report_text(title: str, report: deep.DeepReport) -> str:
 
 
 async def notify_interrupted_deep(bot: Bot, session_maker: async_sessionmaker[AsyncSession], ids: list[int]) -> None:
-    """After a restart: tell the admins which runs stopped and offer to continue them."""
+    """After a restart: runs cut off by it continue by themselves; the admins are told where."""
     from app.services.notifications import notify_admins
 
     for material_id in ids:
         async with session_maker() as session:
             material = await session.get(Material, material_id)
+            job = await session.get(MaterialGenerationJob, material_id)
             if material is None:
                 continue
             stats = await deep.material_stats(session, material_id)
-        await notify_admins(
-            bot,
-            t("mat.deep.interrupted", title=esc(material.title), n=stats.total),
-            kb([(t("mat.btn.deep_resume"), AdminCB(s="mat_deep", id=material_id))]),
+        chat_id = job.notify_chat_id if job is not None else None
+        if not chat_id:
+            await notify_admins(
+                bot,
+                t("mat.deep.interrupted", title=esc(material.title), n=stats.total),
+                kb([(t("mat.btn.deep_resume"), AdminCB(s="mat_deep", id=material_id))]),
+            )
+            continue
+        status = await bot.send_message(
+            chat_id, t("mat.deep.interrupted_auto", title=esc(material.title), n=stats.total)
+        )
+        background.spawn(
+            run_deep_and_report(session_maker, bot, material_id, chat_id, status.message_id),
+            name=f"deep-generation-{material_id}",
         )
 
 
