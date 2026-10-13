@@ -338,7 +338,7 @@ async def cb_answer(callback: CallbackQuery, callback_data: AnsCB, session: Asyn
 async def on_poll_answer(poll_answer: PollAnswer, session: AsyncSession, bot: Bot, user: User | None) -> None:
     """A variant was chosen in a quiz poll: same rules as a button press (final, per-user, checked
     on the server). Telegram itself marks right/wrong on the poll and shows the explanation; the next
-    question follows. The full explanations are in 📋 Xatolarni ko'rish after the test."""
+    question follows. An explanation too long for the poll is sent in full right after the answer."""
     if user is None or not poll_answer.option_ids:
         return  # an answer can't be taken back: a retracted vote changes nothing
     if poll_answer.option_ids[0] >= len(LETTERS):
@@ -369,6 +369,11 @@ async def on_poll_answer(poll_answer: PollAnswer, session: AsyncSession, bot: Bo
         await bot.edit_message_reply_markup(chat_id=chat_id, message_id=message_id)
     except TelegramBadRequest:
         pass
+    if poll.explanation_cut and result.outcome == AnswerOutcome.ACCEPTED:
+        # The 💡 of the poll holds 200 characters: the whole explanation follows as a short message.
+        tq = result.question
+        if tq is not None and tq.explanation:
+            await bot.send_message(chat_id, quiz_polls.full_explanation(tq), reply_to_message_id=message_id)
     if result.outcome == AnswerOutcome.EXPIRED:
         await bot.send_message(chat_id, t("emp.answer.expired"))
         text, markup = await _final_result(session, test, attempt)

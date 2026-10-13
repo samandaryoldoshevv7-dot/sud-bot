@@ -132,6 +132,8 @@ TEXTS: dict[str, str] = {
     "quiz.time_alert": "⏳ Qolgan vaqt: {d}\n🕓 Tugash: {end}",
     "quiz.poll_explanation_source": "📚 {s}",
     "quiz.poll_explanation": "💡 {text}",
+    "quiz.full_explanation": "💡 <b>To'liq izoh:</b> {text}",
+    "quiz.full_explanation_source": "📚 Manba: {s}",
     "quiz.paused": "⏸ Test vaqtincha to'xtatilgan. Javob qabul qilinmadi.",
     "emp.my_tests.deadline": "muddat: {d}",
     "emp.results.title": "📊 <b>Mening natijalarim</b>",

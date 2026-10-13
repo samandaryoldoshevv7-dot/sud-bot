@@ -154,7 +154,7 @@ async def test_question_too_long_is_still_a_poll_with_the_full_text_above(tg, se
     assert not any("○ <b>A)</b>" in x for x in tg.session.texts())  # not the old text look
 
 
-async def test_long_explanation_is_cut_on_the_poll_and_no_card_is_sent(tg, session_maker):  # noqa: F811
+async def test_long_explanation_is_cut_on_the_poll_and_sent_in_full_after_the_answer(tg, session_maker):  # noqa: F811
     async with session_maker() as session:
         test = await _two_source_test(session_maker, session)
         rows = (await session.execute(select(TestQuestion).where(TestQuestion.test_id == test.id))).scalars().all()
@@ -167,11 +167,24 @@ async def test_long_explanation_is_cut_on_the_poll_and_no_card_is_sent(tg, sessi
     await tg(callback_update(7107, EmpCB(a="start", id=test_id).pack(), "Ali"))
     poll = tg.session.polls()[-1]
     assert len(poll.explanation) <= 200 and poll.explanation.endswith("…")
+    assert poll.explanation.startswith("💡 ") and not poll.explanation.endswith(" …")  # cut at a word
     async with session_maker() as session:
         attempt_id = (await session.execute(select(TestAttempt.id).where(TestAttempt.test_id == test_id))).scalar_one()
     tg.session.clear()
     await tg(poll_answer_update(7107, poll_id_of(poll), [await _correct_index(session_maker, attempt_id, 0)]))
-    assert not any("💡 Izoh:" in x for x in tg.session.texts())  # full explanations: 📋 Xatolarni ko'rish
+    full = [x for x in tg.session.texts() if x.startswith("💡 <b>To'liq izoh:</b>")]
+    assert len(full) == 1 and full[0].count("batafsil belgilaydi") == 5 and "📚 Manba:" in full[0]
+
+
+async def test_explanation_keeps_priority_over_the_source_line(session_maker):
+    from app.services import quiz_polls
+
+    tq = TestQuestion(explanation="Ariza besh kun ichida ko'rib chiqiladi. " * 4, source_name="Konstitutsiya " * 4)
+    text, cut = quiz_polls._explanation(tq)
+    assert text.startswith("💡 ") and "📚" not in text and not cut  # the whole explanation, no source
+    tq.explanation, tq.source_name = "Qisqa izoh.", "Konstitutsiya"
+    text, cut = quiz_polls._explanation(tq)
+    assert text == "📚 Konstitutsiya\n💡 Qisqa izoh." and not cut
 
 
 def test_classic_mode_is_still_available(monkeypatch):
