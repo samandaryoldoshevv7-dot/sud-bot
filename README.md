@@ -178,6 +178,12 @@ chiqadi va har bir yangi savolni darhol bazaga saqlaydi:
   imkoniyat. Savollar bankida material, mavzu va qiyinlik bo'yicha filtr; «⚡ Shu materialdan test tuzish» — shu
   materialdan tasodifiy test.
 
+**📚 Barcha materiallardan.** ➕ Test yaratishda fayl yuborish o'rniga **📚 Barcha materiallardan (N ta) — aralash**
+tugmasini bosish mumkin: barcha tayyor materiallar testning manbasi bo'ladi, har bir testda savollar
+materiallar bo'yicha teng va aralash keladi. Keyin 📦 bilan **300 / 500 / 700 / 1000 tagacha** savolni
+testlarga bo'lish mumkin (bitta materialdan ko'pi bilan 300 ta: 500 uchun kamida 2, 700 uchun 3,
+1000 uchun 4 ta material kerak).
+
 **📦 300 tagacha savolni testlarga bo'lish.** Savollar sonidan keyingi «🔢 Nechta variant?» qadamida
 **📦 300 tagacha: N ta test × K ta** tugmasi bor (masalan, 50 tadan → 6 ta test, 30 tadan → 10 ta test).
 Bot avval tanlangan fayllardan 300 tagacha **noyob** savol tuzadi (🧠 chuqur tuzish, fayllar bo'yicha

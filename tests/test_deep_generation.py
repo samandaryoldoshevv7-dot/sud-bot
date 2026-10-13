@@ -312,8 +312,10 @@ async def test_pack_makes_unique_questions_then_splits_them_into_tests(tg, sessi
     # The admin's choice: 📦 300 tagacha, 15 ta test × 20 ta.
     await tg(callback_update(ADMIN, AdminCB(s="ct_n", id=draft_id, v="20").pack()))
     buttons = [x.text for row in tg.session.last_markup().inline_keyboard for x in row]
-    assert "📦 300 tagacha: 15 ta test × 20 ta = 300 ta savol" in buttons
-    await tg(callback_update(ADMIN, AdminCB(s="ct_vn", id=draft_id, v="max").pack()))
+    # Two files: up to 300 or 500 in all (one file gives at most 300); 700 needs three files.
+    assert [b for b in buttons if b.startswith("📦")] == ["📦 300 tagacha: 15 ta test × 20 ta",
+                                                         "📦 500 tagacha: 25 ta test × 20 ta"]  # fmt: skip
+    await tg(callback_update(ADMIN, AdminCB(s="ct_vn", id=draft_id, v="max300").pack()))
     async with session_maker() as session:
         assert await ct.is_pack(session, draft_id) and await ct.variant_count(session, draft_id) == 15
 
@@ -403,3 +405,36 @@ async def test_stop_button_ends_the_waiting(tg, session_maker, monkeypatch):  # 
     await tg(callback_update(ADMIN, AdminCB(s="mat_deep_stop", id=mid).pack()))
     await asyncio.wait_for(task, 5)
     assert "avtomatik davom ettirish to'xtatildi" in tg.session.texts()[-1]
+
+
+async def test_all_materials_button_adds_every_ready_material(tg, session_maker):  # noqa: F811
+    """📚 Barcha materiallardan: one press adds every ready material; then 700 is offered (3 files)."""
+    from app.models import TestSource
+
+    ids = [
+        await make_material_with_text(session_maker, law_text(10, start=1 + 10 * i), title=f"Qonun {i}",
+                                      file_name=f"q{i}.pdf")
+        for i in range(3)
+    ]  # fmt: skip
+    async with session_maker() as session:
+        await make_employee(session, ADMIN, "Admin Bosh")
+    await tg(callback_update(ADMIN, AdminCB(s="ct").pack()))
+    from tests.telegram_mock import message_update
+
+    await tg(message_update(ADMIN, "Umumiy katta test"))
+    buttons = [b.text for row in tg.session.last_markup().inline_keyboard for b in row]
+    assert "📚 Barcha materiallardan (3 ta) — aralash" in buttons
+    async with session_maker() as session:
+        from app.models import Test
+
+        test_id = (await session.execute(select(Test.id))).scalar_one()
+    await tg(callback_update(ADMIN, AdminCB(s="ct_all", id=test_id).pack()))
+    assert any("Qabul qilingan fayllar: 3" in x for x in tg.session.texts())
+    async with session_maker() as session:
+        sources = (await session.execute(select(TestSource.material_id).where(TestSource.test_id == test_id))).scalars()
+        assert sorted(sources) == sorted(ids)
+    await tg(callback_update(ADMIN, AdminCB(s="ct_mix", id=test_id).pack()))
+    await tg(callback_update(ADMIN, AdminCB(s="ct_n", id=test_id, v="50").pack()))
+    packs = [b.text for row in tg.session.last_markup().inline_keyboard for b in row if b.text.startswith("📦")]
+    assert packs == ["📦 300 tagacha: 6 ta test × 50 ta", "📦 500 tagacha: 10 ta test × 50 ta",
+                     "📦 700 tagacha: 14 ta test × 50 ta"]  # fmt: skip

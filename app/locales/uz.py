@@ -260,6 +260,9 @@ TEXTS: dict[str, str] = {
         "(PDF, DOCX, TXT, MD; har biri {mb} MB gacha).\n\nHar bir fayl alohida manba bo'ladi: "
         "masalan «Konstitutsiya.pdf» → manba «Konstitutsiya»."
     ),
+    "ct.btn.all_materials": "📚 Barcha materiallardan ({n} ta) — aralash",
+    "ct.all_added": "📚 {n} ta material qo'shildi",
+    "ct.no_materials": "Tayyor material yo'q — avval fayl yuklang.",
     "ct.files_title": "📎 <b>Qabul qilingan fayllar: {n}</b>",
     "ct.files_hint": "Yana fayl yuborishingiz yoki «🔀 Aralashtirib test tuzish» ni bosishingiz mumkin.\n⏳ — o'qilmoqda, ✅ — tayyor, ❌ — o'qib bo'lmadi.",
     "ct.need_file": "Iltimos, test uchun fayl (PDF, DOCX, TXT, MD) yuboring.",
@@ -274,7 +277,7 @@ TEXTS: dict[str, str] = {
         "bir-birini takrorlamaydi, avvalgi testlardagi savollar ham qaytarilmaydi."
     ),
     "ct.confirm_variants": "🔢 Variantlar: <b>{n} ta</b> (har birida {q} ta savol, takrorlanmaydi)",
-    "ct.btn.pack": "📦 300 tagacha: {parts} ta test × {q} ta = {total} ta savol",
+    "ct.btn.pack": "📦 {total} tagacha: {parts} ta test × {q} ta",
     "ct.confirm_pack": (
         "📦 <b>{n} ta test × {q} ta savol</b> (jami {total} tagacha). Avval fayllardan noyob savollar tuziladi, "
         "keyin testlarga bo'linadi — savollar testlar orasida takrorlanmaydi. Fayllar kamroq bersa, "
