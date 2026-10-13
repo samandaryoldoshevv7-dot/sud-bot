@@ -18,6 +18,7 @@ from app.locales import t
 from app.models import DURATION_CHOICES, DeliveryMode, TestDifficulty, User
 from app.services import groups as group_service
 from app.services import materials as material_service
+from app.services import settings_service
 from app.services.ai_runtime import ai_available
 from app.services.test_builder import MAX_TEST_QUESTIONS, OPEN_WINDOW, TestDraftData, TestStateError, create_test
 from app.utils.text import esc, truncate
@@ -219,7 +220,8 @@ async def cb_new(callback: CallbackQuery, state: FSMContext, session: AsyncSessi
     if not ai_available():
         await callback.answer(t("ai.not_configured_short"), show_alert=False)
     news_available = len(await material_service.active_news_ids(session))
-    await state.update_data(wiz={"news_available": news_available, "options": 4, "difficulty": "mixed"})
+    default_level = "hard" if await settings_service.only_hard(session) else "mixed"
+    await state.update_data(wiz={"news_available": news_available, "options": 4, "difficulty": default_level})
     await _prompt(callback, state, session, "title")
 
 

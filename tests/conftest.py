@@ -128,3 +128,11 @@ def _classic_questions(monkeypatch):
     from app.services.settings_service import SPECS, SettingSpec
 
     monkeypatch.setitem(SPECS, "quiz_polls", SettingSpec("quiz_polls", False, "bool"))
+
+
+@pytest.fixture(autouse=True)
+def _all_difficulties(monkeypatch):
+    """Most tests use medium bank questions; tests of ⚙️ Faqat qiyin savollar switch it on."""
+    from app.services.settings_service import SPECS, SettingSpec
+
+    monkeypatch.setitem(SPECS, "only_hard_questions", SettingSpec("only_hard_questions", False, "bool"))

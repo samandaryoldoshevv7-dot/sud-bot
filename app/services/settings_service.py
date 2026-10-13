@@ -32,6 +32,8 @@ SPECS: dict[str, SettingSpec] = {
         SettingSpec("reminder_hours_before", 3, "int", 0, 72),
         SettingSpec("weak_topic_min_answers", 3, "int", 1, 50),
         SettingSpec("auto_generate_questions", 20, "int", 0, 50),
+        # Only hard questions: AI writes only hard ones and tests take only hard ones from the bank.
+        SettingSpec("only_hard_questions", True, "bool"),
         # Questions as native Telegram quiz polls (always on; the classic look is kept only as a fallback).
         SettingSpec("quiz_polls", True, "bool", visible=False),
     ]
@@ -68,3 +70,7 @@ async def set_value(session: AsyncSession, key: str, value: object) -> object:
     await session.execute(stmt)
     await session.commit()
     return value
+
+
+async def only_hard(session: AsyncSession) -> bool:
+    return bool(await get_value(session, "only_hard_questions"))

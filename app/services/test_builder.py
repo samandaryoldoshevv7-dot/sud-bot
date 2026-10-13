@@ -17,6 +17,7 @@ from app.models import (
     DURATION_CHOICES,
     AttemptStatus,
     DeliveryMode,
+    Difficulty,
     GenerationStatus,
     Material,
     MaterialStatus,
@@ -37,6 +38,7 @@ from app.models import (
 )
 from app.rag.vector_store import SourceScope
 from app.schemas.ai import LETTERS
+from app.services import settings_service
 from app.services.attempts import expire_attempts
 from app.services.materials import active_news_ids
 from app.services.question_generation import MIXED_PLAN, GenerationRequest, QuestionGenerator
@@ -342,6 +344,8 @@ async def select_bank_questions(
         Question.source_kind == kind,
         Question.option_count >= test.option_count,
     )
+    if await settings_service.only_hard(session):  # ⚙️ Faqat qiyin savollar
+        stmt = stmt.where(Question.difficulty == Difficulty.HARD)
     if kind == SourceKind.MATERIAL:
         stmt = stmt.where(Question.source_material_id.in_(source_ids))
     else:

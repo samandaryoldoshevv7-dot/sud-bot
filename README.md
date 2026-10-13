@@ -178,6 +178,11 @@ chiqadi va har bir yangi savolni darhol bazaga saqlaydi:
   imkoniyat. Savollar bankida material, mavzu va qiyinlik bo'yicha filtr; «⚡ Shu materialdan test tuzish» — shu
   materialdan tasodifiy test.
 
+**🔥 Faqat qiyin savollar** (⚙️ Sozlamalar, standart: yoqilgan). AI faqat qiyin savol tuzadi (vaziyatga
+qo'llash, o'xshash qoidalarni farqlash, shart/istisno/muddat/vakolat), «qiyin» deb belgilanmagan javob
+saqlanmaydi, testlar bankdan faqat qiyin savollarni oladi. Avvalgi o'rtacha savollar bankda qoladi,
+lekin testlarga tushmaydi. Sozlamani o'chirsangiz, o'rtacha/qiyin aralash rejim qaytadi.
+
 **📚 Barcha materiallardan.** ➕ Test yaratishda fayl yuborish o'rniga **📚 Barcha materiallardan (N ta) — aralash**
 tugmasini bosish mumkin: barcha tayyor materiallar testning manbasi bo'ladi, har bir testda savollar
 materiallar bo'yicha teng va aralash keladi. Keyin 📦 bilan **300 / 500 / 700 / 1000 tagacha** savolni

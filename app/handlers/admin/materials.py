@@ -965,7 +965,7 @@ async def cb_quick_test_create(
             question_count=int(count_s),
             starts_at=now,
             deadline_at=now + OPEN_WINDOW,
-            difficulty=TestDifficulty.MIXED,
+            difficulty=TestDifficulty.HARD if await settings_service.only_hard(session) else TestDifficulty.MIXED,
             material_ids=[material.id],
             randomize_questions=True,
             randomize_options=True,

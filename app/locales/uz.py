@@ -606,6 +606,7 @@ TEXTS: dict[str, str] = {
     "gen.reason.explanation_missing": "Izoh yo'q",
     "gen.reason.excerpt_not_found_in_source": "Iqtibos manba matnida topilmadi",
     "gen.reason.duplicate": "Takroriy savol",
+    "gen.reason.not_hard": "Qiyin emas (faqat qiyin savollar yoqilgan)",
     "gen.reason.source_not_supporting": "Manba javobni tasdiqlamadi",
     "gen.reason.verifier_disagrees": "Mustaqil tekshiruv boshqa javobni topdi",
     "gen.reason.low_confidence": "Ishonch darajasi past",
@@ -981,6 +982,7 @@ TEXTS: dict[str, str] = {
     "settings.reminder_hours_before": "⏰ Muddatdan necha soat oldin eslatma (0 = o'chiq): {v}",
     "settings.weak_topic_min_answers": "🏷 Mavzu tahlili uchun minimal javoblar: {v}",
     "settings.quiz_polls": "📊 Savollar Telegram quiz (viktorina) ko'rinishida: {v}",
+    "settings.only_hard_questions": "🔥 Faqat qiyin savollar (yangi savollar va testlar): {v}",
     "settings.auto_generate_questions": "🧠 Material yuklanganda avtomatik savollar soni (0 = o'chiq): {v}",
     "settings.btn.auto_approve_group_members": "👥 Guruh a'zolarini avto-tasdiqlash",
     "settings.btn.auto_approve_all": "🔓 Hammani avto-tasdiqlash",
@@ -991,6 +993,7 @@ TEXTS: dict[str, str] = {
     "settings.btn.weak_topic_min_answers": "🏷 Mavzu minimumi",
     "settings.btn.quiz_polls": "📊 Telegram quiz ko'rinishi",
     "settings.btn.auto_generate_questions": "🧠 Avto-savollar soni",
+    "settings.btn.only_hard_questions": "🔥 Faqat qiyin savollar",
     "settings.env": (
         "🔧 <b>Muhit (o'zgartirish — Railway Variables orqali):</b>\n"
         "🕒 Vaqt zonasi: {tz}\n🤖 AI: {ai} ({model})\n🧭 Embedding: {emb}\n🗄 Vektor ombori: {backend}\n"
