@@ -39,11 +39,12 @@ from app.models import (
     MaterialStatus,
     Test,
     TestAudience,
+    TestDifficulty,
     TestSource,
     TestStatus,
     User,
 )
-from app.services import assignments, background
+from app.services import assignments, background, settings_service
 from app.services import groups as group_service
 from app.services import materials as material_service
 from app.services import test_builder as tb
@@ -110,6 +111,7 @@ async def on_title(message: Message, state: FSMContext, session: AsyncSession, u
             answer_reveal=AnswerReveal.IMMEDIATE.value,
             randomize_questions=True,
             randomize_options=True,
+            difficulty=TestDifficulty.HARD if await settings_service.only_hard(session) else TestDifficulty.MIXED,
         ),
         user.id,
     )

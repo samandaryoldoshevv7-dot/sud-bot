@@ -129,6 +129,15 @@ def question_generation_user(
         f"Write {count} multiple-choice question(s).",
         f"Each question must have exactly {option_count} options with keys {letters}.",
         f"Requested difficulty per question (in order): {', '.join(difficulties)}.",
+        *(
+            [
+                "ALL questions must be HARD: apply a rule to a concrete situation, compare similar provisions, "
+                "a condition, exception, deadline or power that is easy to confuse; plausible distractors from the "
+                "same source. No simple recall of a single word or number."
+            ]
+            if difficulties and set(difficulties) == {"hard"}
+            else []
+        ),
         f"Prefer facts from chunk id={chunks[0].chunk_id} (the primary chunk); other chunks are supporting context.",
         "Vary the position of the correct answer between questions.",
     ]

@@ -50,6 +50,7 @@ from app.schemas.ai import (
     SourceVerification,
     SourceVerificationBatch,
 )
+from app.services import settings_service
 from app.services.dedup import DedupIndex, entry_for, key_hash, load_index, lock_inserts
 from app.services.question_validation import check_question
 from app.utils.text import normalize_topic, text_hash
@@ -294,6 +295,9 @@ class QuestionGenerator:
         by_id = {c.id: c for c in context}
         ctx = [prompts.ContextChunk(c.id, self._ref(c, titles)[0], c.text, *self._identity(c, titles)) for c in context]
         existing = self._dup_facts.get(seed.id, [])[-20:] + await self._existing_questions(session, list(by_id))
+        hard_only = await settings_service.only_hard(session)
+        if hard_only:  # ⚙️ Faqat qiyin savollar
+            difficulties = ["hard"] * n
         topic_names = await self._topic_names(session)
 
         response = await structured_call(
@@ -341,6 +345,9 @@ class QuestionGenerator:
                 for err in check.errors:
                     result.rejected[err] += 1
                 logger.info("Generated question failed checks", extra={"errors": ",".join(check.errors)})
+                continue
+            if hard_only and item.difficulty != "hard":
+                result.rejected["not_hard"] += 1
                 continue
             entry = entry_for(item.question, item.options.get(item.correct_answer, ""), item.fact,
                               text_hash(item.question))  # fmt: skip

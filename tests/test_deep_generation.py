@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import random
 import re
 from collections import Counter
 
@@ -438,3 +439,46 @@ async def test_all_materials_button_adds_every_ready_material(tg, session_maker)
     packs = [b.text for row in tg.session.last_markup().inline_keyboard for b in row if b.text.startswith("📦")]
     assert packs == ["📦 300 tagacha: 6 ta test × 50 ta", "📦 500 tagacha: 10 ta test × 50 ta",
                      "📦 700 tagacha: 14 ta test × 50 ta"]  # fmt: skip
+
+
+async def test_only_hard_questions_setting(session_maker, monkeypatch):
+    """⚙️ Faqat qiyin savollar (the default in production): the AI is asked only for hard questions,
+    a question it labels otherwise is not saved, and tests take only hard questions from the bank."""
+    from app.models import Difficulty, Test
+    from app.services import settings_service
+    from app.services import test_builder as tb
+    from app.services.settings_service import SPECS, SettingSpec
+
+    monkeypatch.setitem(SPECS, "only_hard_questions", SettingSpec("only_hard_questions", True, "bool"))
+
+    class SomeMediumLLM(FactLLM):
+        def _generate(self, user):
+            self.levels_asked = re.search(r"in order\): ([a-z, ]+)\.", user).group(1)
+            self.hard_rule = "ALL questions must be HARD" in user
+            data = json.loads(super()._generate(user))
+            for i, q in enumerate(data["questions"]):
+                q["difficulty"] = "medium" if i == 0 else "hard"  # the model ignores the request once
+            return json.dumps(data, ensure_ascii=False)
+
+    llm = SomeMediumLLM()
+    mid = await make_material_with_text(session_maker, law_text(20), title="Qonun", file_name="qonun.pdf")
+    report = await deep.run(session_maker, mid, factory(llm))
+    assert set(llm.levels_asked.split(", ")) == {"hard"} and llm.hard_rule
+    rows = await _questions(session_maker, mid)
+    assert rows and all(q.difficulty == Difficulty.HARD for q in rows)
+    assert report.rejected_now > 0  # the medium ones were not saved
+
+    async with session_maker() as session:
+        assert await settings_service.only_hard(session)
+        await make_question(session, text_="Oddiy o'rtacha savol?", material_id=mid, difficulty=Difficulty.MEDIUM)
+        test = await session.get(Test, (await make_test_for(session, mid)).id)
+        picked = await tb.select_bank_questions(
+            session, test, tb.SourceKind.MATERIAL, 100, [mid], set(), random.Random(1)
+        )  # fmt: skip
+        assert picked and all(q.difficulty == Difficulty.HARD for q in picked)
+
+
+async def make_test_for(session, material_id):
+    from tests.factories import make_test
+
+    return await make_test(session, question_count=5, material_ids=[material_id])
