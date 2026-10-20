@@ -8,6 +8,7 @@ import time
 from aiogram import Bot, F, Router
 from aiogram.filters import JOIN_TRANSITION, LEAVE_TRANSITION, ChatMemberUpdatedFilter, Command
 from aiogram.types import CallbackQuery, ChatMemberUpdated, Message
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.keyboards.callbacks import AdminCB, GroupAnsCB, GroupStartCB
@@ -205,6 +206,7 @@ async def on_group_poll_answer(bot: Bot, session: AsyncSession, poll_answer, gqm
     tg_user = poll_answer.user
     result = await group_tests.submit_group_answer(session, tg_user, gqm_id, letter)
     if result.code != GroupAnswerCode.ACCEPTED:
+        await _tell_why_not_counted(bot, session, tg_user.id, gqm_id, result)
         return
     # Right/wrong and the explanation are on the poll itself; the full result goes to the bot.
     if result.finished and result.attempt is not None:
@@ -220,6 +222,28 @@ async def cb_group_answer(callback: CallbackQuery, callback_data: GroupAnsCB, se
         return
     if result.finished and result.attempt is not None:
         await _send_private_result(bot, session, callback.from_user.id, result)
+
+
+_TOLD: set[tuple[int, int, str]] = set()  # (telegram id, post, reason): told once, not per poll
+
+
+async def _tell_why_not_counted(bot: Bot, session: AsyncSession, telegram_id: int, gqm_id: int, result) -> None:
+    """A vote on a group poll can't be taken back, so a vote that was not counted (not approved,
+    blocked, not started, time over) is explained privately — once per test, if the bot can write."""
+    from app.models import GroupQuestionMessage, User
+    from app.services.notifications import safe_send
+
+    if result.code in (GroupAnswerCode.DUPLICATE, GroupAnswerCode.INVALID):
+        return
+    gqm = await session.get(GroupQuestionMessage, gqm_id)
+    key = (telegram_id, gqm.post_id if gqm else 0, result.code.value)
+    if key in _TOLD:
+        return
+    _TOLD.add(key)
+    user = (await session.execute(select(User).where(User.telegram_id == telegram_id))).scalar_one_or_none()
+    if user is None or not user.has_private_chat:
+        return
+    await safe_send(bot, telegram_id, t("gt.not_counted", reason=group_tests.answer_alert(result)))
 
 
 async def _send_private_result(bot: Bot, session: AsyncSession, telegram_id: int, result) -> None:

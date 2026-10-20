@@ -17,6 +17,7 @@ Excel hisobotlarni kuzatadi.
    - [Aralash test yaratish](#test-yaratish-bir-nechta-fayldan-aralash-test)
    - [Xodim: Testlarim va test jarayoni](#xodim-testlarim-va-test-jarayoni)
    - [Guruhda test](#guruhda-test)
+   - [Bitta materialdan 300 tagacha noyob savol](#-bitta-materialdan-300-tagacha-noyob-savol)
    - [Admin: boshqaruv va natijalar](#admin-boshqaruv-va--natijalar)
 2. [Arxitektura](#arxitektura)
 3. [Talablar](#talablar)
@@ -585,7 +586,7 @@ handlerlar (soxta Telegram transport bilan), lokalizatsiya kalitlari, sirlar yo'
 | Belgi | Sabab / yechim |
 |---|---|
 | Deploy `healthcheck failed` | Loglarni ko'ring. Ko'pincha `DATABASE_URL` noto'g'ri yoki `BOT_TOKEN` yaroqsiz (`Unauthorized`). |
-| `TelegramConflictError` | Ikki nusxa polling qilyapti: replikalar 1 ta bo'lsin; lokal botni o'chiring. |
+| `TelegramConflictError` (bot gohida javob bermaydi, «qotib qoladi») | Xuddi shu `BOT_TOKEN` bilan bot **boshqa joyda ham** ishlayapti — pastdagi «Bot qotib qolsa» bo'limiga qarang. Bot buni o'zi aniqlab adminlarga ⚠️ xabar yuboradi, `/health` da `"polling_conflict": true` ko'rinadi. |
 | `/admin` → «faqat administratorlar uchun» | `ADMIN_TELEGRAM_IDS` da ID yo'q yoki xato; o'zgartirgandan so'ng qayta deploy. |
 | Material `FAILED: PDF ichida matn topilmadi` | Skanerlangan PDF — OCR qilingan PDF yoki DOCX yuklang. |
 | «AI sozlanmagan» | `GEMINI_API_KEY` yoki `GROQ_API_KEY` qo'shing. |
@@ -596,6 +597,23 @@ handlerlar (soxta Telegram transport bilan), lokalizatsiya kalitlari, sirlar yo'
 | Guruh a'zolari aniqlanmayapti | @BotFather `/setprivacy` → Disable; botni guruh admini qiling; xodim `/start` bosganda ham tekshiriladi. |
 
 ---
+
+
+### Bot qotib qolsa (javob bermaydi yoki kech javob beradi)
+
+1. Railway → **sud-bot** → **Deployments** → oxirgi deploy → **View Logs**.
+2. Loglarda `TelegramConflictError: terminated by other getUpdates request` bo'lsa — botning **ikkinchi
+   nusxasi** bor. Telegram ikkalasiga navbatma-navbat ulanadi, shuning uchun bot ba'zan javob bermaydi.
+   Tekshiring va o'chiring:
+   * kompyuteringizda `python -m app.main` (yoki `docker compose up`) ishlab turgan bo'lmasin;
+   * Railway'da **boshqa loyiha yoki servis** shu tokenni ishlatmasin (Dashboard'dagi barcha loyihalar);
+   * sud-bot servisida **Settings → Scale → Replicas = 1**;
+   * eski hosting (Replit, PythonAnywhere, VPS…) da bot qolib ketmagan bo'lsin.
+   Topilmasa — eng ishonchli yo'l: @BotFather → `/revoke` → bot tanlang → yangi tokenni **faqat** Railway'dagi
+   `BOT_TOKEN` ga qo'ying. Eski nusxa avtomatik ishlamay qoladi.
+3. Deploy paytida 10–30 soniya `Conflict` chiqishi normal (eski va yangi konteyner almashadi). Uni ham yo'qotish
+   uchun Railway Variables'ga `RAILWAY_DEPLOYMENT_OVERLAP_SECONDS=0` qo'shing.
+4. AI limiti: 🧠 savol yaratish to'xtamaydi — limit tiklanish vaqtini ko'rsatib o'zi kutadi va davom etadi.
 
 ## Loyiha tuzilmasi
 

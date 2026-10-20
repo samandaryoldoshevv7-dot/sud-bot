@@ -127,6 +127,7 @@ TEXTS: dict[str, str] = {
     "quiz.correct_answer": "✅ <b>TO'G'RI JAVOB:</b>",
     "quiz.explanation": "💡 Izoh: {text}",
     "quiz.btn.close": "➡️ Keyingi savol",
+    "quiz.next_failed": "✅ Javobingiz saqlandi. Keyingi savolni ochish uchun tugmani bosing.",
     "quiz.poll_see_above": "{head} ⬆️ Savol va variantlar yuqoridagi xabarda",
     "quiz.btn.time": "⏳ Qolgan vaqt",
     "quiz.time_alert": "⏳ Qolgan vaqt: {d}\n🕓 Tugash: {end}",
@@ -224,6 +225,7 @@ TEXTS: dict[str, str] = {
     "gt.alert.started": "▶️ Test boshlandi! Javob berilgan: {done}/{total}.\nSavollar shu guruhda. Har bir savolga faqat bir marta javob bera olasiz.",
     "gt.alert.open_private": "▶️ Test siz uchun ochildi ({done}/{total}). Savollar bot bilan shaxsiy chatda.",
     "gt.alert.already_finished": "✅ Siz bu testni allaqachon yakunlagansiz.",
+    "gt.not_counted": "ℹ️ Guruhdagi testdagi javobingiz hisobga olinmadi: {reason}",
     "gt.alert.duplicate": "⚠️ Bu savolga siz allaqachon javob bergansiz.",
     "gt.alert.your_choice": "🔒 Tanlangan: {letter}",
     "gt.alert.accepted": "✅ Javobingiz qabul qilindi.\n🔒 Tanlangan: {selected}",
@@ -968,6 +970,13 @@ TEXTS: dict[str, str] = {
     "settings.btn.emb_on": "🧠 Aqlli qidiruvni qayta yoqish",
     "settings.emb_on_ok": "✅ Aqlli qidiruv yoqildi.",
     "settings.emb_on_fail": "❌ Model yuklanmadi — oddiy matn qidiruvi ishlatiladi.",
+    "bot.polling_conflict": (
+        "⚠️ <b>Bot boshqa joyda ham ishga tushirilgan</b> (xuddi shu BOT_TOKEN bilan).\n\n"
+        "Telegram ikkala nusxaga navbatma-navbat ulanadi, shuning uchun bot ba'zan javob bermaydi va "
+        "«qotib qoladi».\n\nYechim: boshqa nusxani o'chiring (kompyuterdagi, boshqa Railway loyihasi yoki "
+        "servisidagi, eski hostingdagi). Topilmasa: @BotFather → /revoke → yangi tokenni faqat Railway'dagi "
+        "BOT_TOKEN ga qo'ying."
+    ),
     "emb.switched_off": (
         "⚠️ Fayl indekslanayotganda bot to'xtab qoldi — server xotirasi yetmagan bo'lishi mumkin.\n\n"
         "Bot endi to'xtab qolmasligi uchun aqlli qidiruv (embedding) o'chirildi. Materiallar va test tuzish "

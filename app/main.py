@@ -29,7 +29,7 @@ from app.locales import t
 from app.middlewares import DbSessionMiddleware, UserMiddleware
 from app.rag.embeddings import FastEmbedProvider, get_embedding_provider
 from app.rag.vector_store import detect_backend
-from app.services import background, deep_generation, embedding_guard
+from app.services import background, conflict_watch, deep_generation, embedding_guard
 from app.services.scheduler import scheduler_loop
 from app.services.test_builder import reset_stuck_generation
 from app.services.users import sync_admin_roles
@@ -119,7 +119,14 @@ def build_web_app(bot: Bot, dp: Dispatcher, settings: Settings) -> web.Applicati
         except Exception:
             return web.json_response({"status": "error", "db": False}, status=503)
         return web.json_response(
-            {"status": "ok", "db": True, "version": __version__, "background_tasks": background.running_count()}
+            {
+                "status": "ok",
+                "db": True,
+                "version": __version__,
+                "background_tasks": background.running_count(),
+                # True: another copy of the bot polls with the same token (see conflict_watch).
+                "polling_conflict": conflict_watch.conflict_now(),
+            }
         )
 
     app.router.add_get("/health", health)
@@ -141,6 +148,10 @@ async def run() -> None:
     me = await bot.get_me()
     logger.info("Bot authorised", extra={"username": me.username, "bot_id": me.id})
     await set_commands(bot, settings)
+    if settings.bot_mode == "polling":
+        from app.services.notifications import notify_admins
+
+        conflict_watch.install(lambda: notify_admins(bot, t("bot.polling_conflict")))
     if interrupted_tests:  # test building cut off by the restart: tell the admins how to continue
         from app.handlers.admin.create_test import notify_interrupted_tests
 

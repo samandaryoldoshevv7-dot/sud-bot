@@ -226,3 +226,25 @@ async def test_old_bot_button_in_the_group_opens_the_private_chat(tg, session_ma
     urls = [m.url for m in tg.session.requests if isinstance(m, AnswerCallbackQuery)]
     assert urls and urls[0].endswith(f"start=run_{test_id}")
     assert not tg.session.polls()
+
+
+async def test_next_question_not_sent_gives_a_button_instead_of_freezing(tg, session_maker, monkeypatch):  # noqa: F811
+    """Telegram refuses the next poll (network / flood): the answer is kept and a button is shown."""
+    from aiogram.exceptions import TelegramNetworkError
+
+    from app.handlers import employee
+
+    _test_id, attempt_id = await _start(tg, session_maker, user_id=7191)
+    poll = tg.session.polls()[-1]
+
+    async def broken(*args, **kwargs):
+        raise TelegramNetworkError(method=None, message="timeout")
+
+    monkeypatch.setattr(employee, "send_current_question", broken)
+    tg.session.clear()
+    await tg(poll_answer_update(7191, poll_id_of(poll), [await _correct_index(session_maker, attempt_id, 0)]))
+    sent = tg.session.sent_to(7191)
+    assert sent and "Javobingiz saqlandi" in sent[-1].text
+    assert [b.text for row in sent[-1].reply_markup.inline_keyboard for b in row] == ["➡️ Keyingi savol"]
+    async with session_maker() as session:
+        assert (await session.get(TestAttempt, attempt_id)).answered_count == 1

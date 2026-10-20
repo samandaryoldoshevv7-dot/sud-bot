@@ -212,7 +212,12 @@ async def start_attempt(
     now: datetime | None = None,
     rng: random.Random | None = None,
     layout: list[dict] | None = None,
+    *,
+    first_only: bool = False,
+    ignore_pause: bool = False,
 ) -> StartResult:
+    """``first_only``: never a retake (a vote on a group poll must not start a new attempt);
+    ``ignore_pause``: a group poll vote cannot be refused by Telegram, so it is not lost while paused."""
     now = now or utcnow()
     rng = rng or random.SystemRandom()
     user_id = user.id
@@ -238,7 +243,7 @@ async def start_attempt(
         return StartResult(error=StartError.NOT_ACTIVE)
     if now < test.starts_at:
         return StartResult(error=StartError.NOT_STARTED_YET)
-    if test.paused:
+    if test.paused and not ignore_pause:
         return StartResult(error=StartError.PAUSED)
     if not await user_in_test_audience(session, test, user):
         assignment = await get_assignment(session, test_id, user.id)
@@ -255,6 +260,8 @@ async def start_attempt(
     ).all()
     # Answers are final, so a finished attempt is retaken only when an admin allowed it (once).
     if any(st != AttemptStatus.IN_PROGRESS for st, _ in previous):
+        if first_only:
+            return StartResult(error=StartError.ALREADY_COMPLETED)
         assignment = await get_assignment(session, test_id, user.id)
         if assignment is None or not assignment.retake_allowed:
             return StartResult(error=StartError.ALREADY_COMPLETED)
