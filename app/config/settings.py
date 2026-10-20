@@ -11,7 +11,7 @@ from typing import Literal
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from zoneinfo import ZoneInfo
 
-from pydantic import AliasChoices, Field, SecretStr, field_validator
+from pydantic import AliasChoices, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 DEFAULT_VALIDATION_MODEL = "openai/gpt-oss-20b"
@@ -95,6 +95,17 @@ class Settings(BaseSettings):
     port: int = 8080
     scheduler_interval_seconds: int = 60
     broadcast_delay_seconds: float = 0.05
+
+    @model_validator(mode="after")
+    def _webhook_needs_secret(self) -> Settings:
+        """Without a secret anyone could POST forged updates (e.g. as an admin) to the webhook URL."""
+        if self.bot_mode == "webhook":
+            secret = self.webhook_secret.get_secret_value() if self.webhook_secret else ""
+            if len(secret) < 16:
+                raise ValueError("BOT_MODE=webhook needs WEBHOOK_SECRET of at least 16 characters")
+            if not self.webhook_base_url:
+                raise ValueError("BOT_MODE=webhook needs WEBHOOK_BASE_URL")
+        return self
 
     @field_validator("admin_telegram_ids")
     @classmethod

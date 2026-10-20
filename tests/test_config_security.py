@@ -28,6 +28,34 @@ def test_admin_ids_reject_garbage(monkeypatch):
         Settings(bot_token="x", database_url="postgresql://a@b/c", admin_telegram_ids="123,abc")
 
 
+def test_webhook_mode_requires_a_secret():
+    """Without WEBHOOK_SECRET anyone could POST forged updates (e.g. as an admin) to the webhook."""
+    from app.config.settings import Settings
+
+    base = dict(bot_token="x", database_url="postgresql://a@b/c", bot_mode="webhook",
+                webhook_base_url="https://bot.example")  # fmt: skip
+    with pytest.raises(ValueError):
+        Settings(**base)
+    with pytest.raises(ValueError):
+        Settings(**base, webhook_secret="short")
+    assert Settings(**base, webhook_secret="x" * 32).bot_mode == "webhook"
+    assert Settings(bot_token="x", database_url="postgresql://a@b/c").bot_mode == "polling"
+
+
+def test_spreadsheet_never_runs_a_name_as_a_formula():
+    from openpyxl import Workbook
+
+    from app.reports.builder import _neutralize_formulas, _safe_text
+
+    wb = Workbook()
+    wb.active.append(['=HYPERLINK("https://evil.example","Ism")', "Oddiy Ism", "-5"])
+    _neutralize_formulas(wb)
+    cells = [c for c in wb.active[1]]
+    assert cells[0].value.startswith("'=") and cells[0].data_type == "s"
+    assert cells[1].value == "Oddiy Ism"
+    assert _safe_text("+998901234567") == "'+998901234567" and _safe_text(5) == 5
+
+
 @pytest.mark.parametrize(
     "url,expected,args",
     [

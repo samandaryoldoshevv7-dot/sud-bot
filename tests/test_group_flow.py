@@ -390,3 +390,20 @@ async def test_group_answer_sends_nothing_to_the_private_chat(tg, session_maker)
     alert = tg.session.alerts()[-1]
     assert alert.startswith("❌ NOTO'G'RI JAVOB") and f"To'g'ri javob: {correct}" in alert and len(alert) <= 200
     assert tg.session.sent_to(8101) == [] and tg.session.sent_to(GROUP_CHAT) == []
+
+
+async def test_supergroup_upgrade_moves_posted_tests(session_maker):
+    """Telegram gives an upgraded group a new chat id: tests already posted there follow it."""
+    from app.models import Group, GroupTestPost
+    from app.services import groups as group_service
+
+    async with session_maker() as session:
+        group = Group(chat_id=-100111, title="Sud", is_active=True)
+        session.add(group)
+        await session.commit()
+        test = await make_test(session, question_count=1)
+        session.add(GroupTestPost(test_id=test.id, group_id=group.id, chat_id=-100111))
+        await session.commit()
+        await group_service.migrate_chat(session, -100111, -100222)
+        post = (await session.execute(select(GroupTestPost))).scalar_one()
+        assert post.chat_id == -100222 and (await session.get(Group, group.id)).chat_id == -100222

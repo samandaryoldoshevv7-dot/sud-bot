@@ -19,12 +19,12 @@ from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, Message
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.config import get_settings
 from app.documents import DocumentError, detect_file_type
-from app.handlers.admin.common import show
+from app.handlers.admin.common import fit_message, show
 from app.handlers.admin.materials import _friendly_error, doc_error_text
 from app.keyboards.callbacks import AdminCB
 from app.keyboards.common import kb
@@ -34,6 +34,7 @@ from app.models import (
     AnswerReveal,
     BotSetting,
     DeliveryMode,
+    GenerationStatus,
     Group,
     Material,
     MaterialStatus,
@@ -64,6 +65,7 @@ VARIANT_CHOICES = (1, 2, 3, 4, 5)
 PACK_TOTALS = (300, 500, 700, 1000)
 PACK_TOTAL = PACK_TOTALS[0]
 PER_SOURCE = 300
+MAX_PACK_TESTS = 30  # more tests than this at once: too many messages for admins and employees
 MAX_TEST_QUESTIONS = tb.MAX_TEST_QUESTIONS
 USERS_PAGE = 8
 MATERIAL_ICON = {
@@ -153,7 +155,7 @@ async def cb_all_materials(callback: CallbackQuery, callback_data: AdminCB, sess
     await session.commit()
     await callback.answer(t("ct.all_added", n=len(materials)))
     text, _ = await _files_text(session, test.id)
-    await show(callback, text, _files_kb(test.id))
+    await show(callback, fit_message(text), _files_kb(test.id))
 
 
 def _files_kb(test_id: int):
@@ -222,11 +224,12 @@ async def on_file(
         return
     content_hash = sha256_bytes(path.read_bytes())
     material = await material_service.find_duplicate(session, content_hash)
-    if material is not None:  # the same file was uploaded before: reuse its processed text
+    if material is not None and material.status == MaterialStatus.FAILED:
+        # The same file failed before: read it again (the same material, so no duplicate rows).
+        await message.answer(t("ct.duplicate_failed"))
+        background.spawn(_process(session_maker, material.id, path), name=f"process-material-{material.id}")
+    elif material is not None:  # the same file was uploaded before: reuse its processed text
         path.unlink(missing_ok=True)
-        if material.status == MaterialStatus.FAILED:
-            material = None
-            await message.answer(t("ct.duplicate_failed"))
     if material is None:
         stem = Path(document.file_name or "Hujjat").stem.replace("_", " ").strip()[:200] or "Hujjat"
         material = await material_service.create_material(
@@ -246,7 +249,7 @@ async def on_file(
     await session.commit()
     text, _ = await _files_text(session, test_id)
     await message.answer(
-        text,
+        fit_message(text),
         reply_markup=kb(
             [(t("ct.btn.mix"), AdminCB(s="ct_mix", id=test_id))],
             [(t("btn.refresh"), AdminCB(s="ct_files", id=test_id))],
@@ -286,7 +289,11 @@ async def cb_cancel(callback: CallbackQuery, callback_data: AdminCB, state: FSMC
     await state.clear()
     test = await session.get(Test, callback_data.id)
     if test is not None and test.status == TestStatus.DRAFT and test.published_at is None:
-        await tb.delete_test(session, test.id)  # uploaded files stay in 📚 Materiallar
+        try:
+            await tb.delete_test(session, test.id)  # uploaded files stay in 📚 Materiallar
+        except tb.TestStateError as exc:  # e.g. the test is being built right now
+            await callback.answer(t(f"test_error.{exc.code}"), show_alert=True)
+            return
     await show(callback, t("common.cancelled"))
 
 
@@ -360,7 +367,7 @@ async def _set_count(target, session: AsyncSession, test_id: int, count: int) ->
     rows = [[(str(n), AdminCB(s="ct_vn", id=test_id, v=str(n))) for n in VARIANT_CHOICES]]
     for total in await pack_totals(session, test_id):
         parts = total // count
-        if parts >= 2:
+        if 2 <= parts <= MAX_PACK_TESTS:
             rows.append(
                 [(t("ct.btn.pack", parts=parts, q=count, total=total), AdminCB(s="ct_vn", id=test_id, v=f"max{total}"))]
             )
@@ -399,7 +406,7 @@ async def cb_variants(callback: CallbackQuery, callback_data: AdminCB, session: 
         if total not in await pack_totals(session, test.id):
             return
         parts = total // max(1, test.question_count)
-        if parts < 2:
+        if not 2 <= parts <= MAX_PACK_TESTS:
             return
         await session.merge(BotSetting(key=f"ct_variants:{test.id}", value=parts))
         await session.merge(BotSetting(key=f"ct_pack:{test.id}", value=True))
@@ -596,6 +603,9 @@ async def cb_go(
     test = await _draft(callback, session, callback_data.id)
     if test is None:
         return
+    if test.id in _BUILDING:  # a double tap: the build already runs
+        await callback.answer(t("tests.assembly_busy"), show_alert=True)
+        return
     await state.clear()
     if not ai_available():
         await callback.answer(t("ai.not_configured"), show_alert=True)
@@ -607,7 +617,22 @@ async def cb_go(
     )
 
 
+_BUILDING: set[int] = set()  # tests being built in this process (double taps start nothing new)
+
+
 async def build_and_send(
+    session_maker: async_sessionmaker[AsyncSession], bot: Bot, test_id: int, chat_id: int, message_id: int
+) -> None:
+    if test_id in _BUILDING:
+        return
+    _BUILDING.add(test_id)
+    try:
+        await _build_and_send(session_maker, bot, test_id, chat_id, message_id)
+    finally:
+        _BUILDING.discard(test_id)
+
+
+async def _build_and_send(
     session_maker: async_sessionmaker[AsyncSession], bot: Bot, test_id: int, chat_id: int, message_id: int
 ) -> None:
     async def progress(stage: str, done: int, total: int) -> None:
@@ -650,6 +675,7 @@ async def build_and_send(
         markup = kb(*rows)
     if spent.requests or spent.cache_hits:
         text += "\n\n" + usage_text(spent)
+    text = fit_message(text)
     try:
         await bot.edit_message_text(text, chat_id=chat_id, message_id=message_id, reply_markup=markup)
     except TelegramBadRequest:
@@ -678,11 +704,12 @@ async def _build_variants(
         if first is None:
             return
         title, size = first.title, first.question_count
+        suffix = t("ct.variant_title", title="", k=1)
+        if title.endswith(suffix):  # resumed after a restart: the name already has its suffix
+            title = title[: -len(suffix)]
         first.title = t("ct.variant_title", title=title, k=1)[:255]
-        # Asked once: a later 🔄 Davom ettirish finishes just that one variant.
-        await session.execute(
-            delete(BotSetting).where(BotSetting.key.in_([f"ct_variants:{test_id}", f"ct_pack:{test_id}"]))
-        )
+        if pack:  # long filling: a restart now shows up as an interrupted build (🔄 Davom ettirish)
+            first.generation_status = GenerationStatus.RUNNING
         await session.commit()
     ids = [test_id]
     results: list[tuple[int, int, object]] = []
@@ -709,21 +736,37 @@ async def _build_variants(
                 return True
 
             await fill_progress(0, variants * size)
-            filled = await prefill_bank(
-                session_maker, test_id, variants * size, make_generator if ai_available() else None, fill_progress,
-                wait_for_limit=wait_for_limit,
-            )  # fmt: skip
+            try:
+                filled = await prefill_bank(
+                    session_maker, test_id, variants * size, make_generator if ai_available() else None,
+                    fill_progress, wait_for_limit=wait_for_limit,
+                )  # fmt: skip
+            finally:
+                async with session_maker() as session:
+                    await session.execute(
+                        update(Test).where(Test.id == test_id).values(generation_status=GenerationStatus.IDLE)
+                    )
+                    await session.commit()
             full = filled.available // size
             if full < variants:
                 # Only as many tests as there are unique questions (a part-filled last one is offered).
                 variants = max(1, full + (1 if filled.available % size else 0))
                 reason = _friendly_error(filled.error) if filled.error else t("ct.pack_exhausted")
                 pack_note = t("ct.pack_short", available=filled.available, reason=esc(reason))
+        # Asked once: a later 🔄 Davom ettirish finishes just that one variant.
+        async with session_maker() as session:
+            await session.execute(
+                delete(BotSetting).where(BotSetting.key.in_([f"ct_variants:{test_id}", f"ct_pack:{test_id}"]))
+            )
+            await session.commit()
         for k in range(1, variants + 1):
             if k > 1:
-                async with session_maker() as session:
-                    clone = await tb.clone_test(session, test_id, t("ct.variant_title", title=title, k=k)[:255])
-                    ids.append(clone.id)
+                try:
+                    async with session_maker() as session:
+                        clone = await tb.clone_test(session, test_id, t("ct.variant_title", title=title, k=k)[:255])
+                        ids.append(clone.id)
+                except tb.TestStateError:  # the first test was cancelled meanwhile
+                    break
 
             async def progress(stage: str, done: int, total: int, k: int = k) -> None:
                 try:
@@ -738,6 +781,13 @@ async def _build_variants(
             report = await build_mixed_test(session_maker, vid, make_generator if ai_available() else None, progress)
             if report.created and report.missing == 0:
                 await publish_and_send(session_maker, bot, vid)
+            if report.created == 0 and vid != test_id:
+                async with session_maker() as session:  # nothing could be added: no empty test is kept
+                    try:
+                        await tb.delete_test(session, vid)
+                    except tb.TestStateError:
+                        pass
+                break
             results.append((k, vid, report))
             if pack and not (report.created and report.missing == 0):
                 break  # the files gave no more: no further (empty) tests
@@ -762,6 +812,7 @@ async def _build_variants(
         text += "\n\n" + pack_note
     if spent.requests or spent.cache_hits:
         text += "\n\n" + usage_text(spent)
+    text = fit_message(text)
     try:
         await bot.edit_message_text(text, chat_id=chat_id, message_id=message_id, reply_markup=kb(*rows))
     except TelegramBadRequest:
@@ -815,8 +866,6 @@ async def cb_resume(
     callback: CallbackQuery, callback_data: AdminCB, session: AsyncSession, session_maker, bot: Bot
 ) -> None:
     """🔄 Davom ettirish: build the mixed test again; questions made before are reused from the bank."""
-    from app.models import GenerationStatus
-
     test = await _draft(callback, session, callback_data.id)
     if test is None:
         return
