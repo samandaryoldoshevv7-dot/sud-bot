@@ -138,3 +138,79 @@ async def test_old_mode_buttons_are_harmless(tg, session_maker):  # noqa: F811
     await tg(callback_update(ADMIN, AdminCB(s="mode", v="group").pack(), "Admin"))
     assert not any("Kutilmagan xatolik" in x for x in tg.session.texts() + tg.session.alerts())
     assert group_tests  # module in use
+
+
+async def test_group_votes_never_start_a_retake_which_runs_privately(tg, session_maker):  # noqa: F811
+    """Ali finished the group test; the admin allows a retake: a vote on a group poll does not start
+    it (every poll there is already voted), the retake opens in the bot's private chat."""
+    from app.models import User
+    from app.services import test_builder as tb
+
+    await tg(message_update(7831, "/start", "Ali"))
+    test_id = await _setup(session_maker, for_group=True)
+    await launch_test(tg.bot, session_maker, test_id)
+    polls = _group_polls(tg)
+    assert all(p.protect_content for p in polls)  # a forwarded poll can't be answered by outsiders
+    for poll in polls[:3]:
+        await tg(poll_answer_update(7831, poll_id_of(poll), [poll.correct_option_ids[0]], "Ali"))
+    async with session_maker() as session:
+        ali = (await session.execute(select(User).where(User.telegram_id == 7831))).scalar_one()
+        attempt = (await session.execute(select(TestAttempt).where(TestAttempt.user_id == ali.id))).scalar_one()
+        from app.models import AttemptStatus
+        from app.services.attempts import finalize_attempt
+
+        await finalize_attempt(session, attempt, AttemptStatus.COMPLETED, tb.utcnow())
+        await session.commit()
+        await assignments.allow_retake(session, test_id, ali.id)
+        ali_id = ali.id
+    await tg(poll_answer_update(7831, poll_id_of(polls[3]), [0], "Ali"))  # the last, not yet voted poll
+    async with session_maker() as session:
+        attempts = (await session.execute(select(TestAttempt).where(TestAttempt.user_id == ali_id))).scalars().all()
+        assert len(attempts) == 1  # no retake started by a group vote
+    tg.session.clear()
+    await tg(message_update(7831, f"/start run_{test_id}", "Ali"))
+    sent = [m.text for m in tg.session.sent_to(7831)]
+    assert sent and not any("guruhda ishlanadi" in x for x in sent), sent
+    async with session_maker() as session:
+        attempts = (await session.execute(select(TestAttempt).where(TestAttempt.user_id == ali_id))).scalars().all()
+        assert sorted(a.attempt_no for a in attempts) == [1, 2]
+
+
+async def test_vote_while_paused_is_kept_and_a_refused_vote_is_explained_once(tg, session_maker):  # noqa: F811
+    from app.models import User, UserStatus
+    from app.services import test_builder as tb
+
+    await tg(message_update(7841, "/start", "Ali"))
+    await tg(message_update(7842, "/start", "Vali"))
+    test_id = await _setup(session_maker, for_group=True)
+    await launch_test(tg.bot, session_maker, test_id)
+    polls = _group_polls(tg)
+    async with session_maker() as session:
+        await tb.set_paused(session, test_id, True)
+        vali = (await session.execute(select(User).where(User.telegram_id == 7842))).scalar_one()
+        vali.status = UserStatus.BLOCKED
+        await session.commit()
+    # Telegram can't refuse a vote: a first vote during a pause is kept, not lost.
+    await tg(poll_answer_update(7841, poll_id_of(polls[0]), [polls[0].correct_option_ids[0]], "Ali"))
+    async with session_maker() as session:
+        rows = (await session.execute(select(UserAnswer.telegram_id))).scalars().all()
+        assert rows == [7841]
+    # A vote that can't count is explained privately, once (not for every poll).
+    tg.session.clear()
+    for poll in polls[:3]:
+        await tg(poll_answer_update(7842, poll_id_of(poll), [0], "Vali"))
+    notes = [m.text for m in tg.session.sent_to(7842) if "hisobga olinmadi" in m.text]
+    assert len(notes) == 1
+
+
+def test_corrections_show_the_letter_of_this_layout():
+    """Answered in another group's shuffle: the letter shown follows the option, not the old letter."""
+    from app.handlers.formatting import corrections_text
+    from app.models import TestQuestion
+
+    tq = TestQuestion(id=1, question_text="Savol?", options={"A": "bir", "B": "ikki", "C": "uch", "D": "to'rt"},
+                      correct_option="C", explanation="Izoh", source_name="Qonun")  # fmt: skip
+    answer = UserAnswer(position=0, selected_option="B", selected_display="D")  # "D" in the other group
+    layout = [{"tq": 1, "opts": ["C", "B", "A", "D"]}]  # here: A)=uch B)=ikki C)=bir D)=to'rt
+    text = corrections_text([(answer, tq)], layout)[0]
+    assert "B) ikki" in text and "A) uch" in text

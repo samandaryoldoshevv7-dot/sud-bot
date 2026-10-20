@@ -7,11 +7,13 @@ and the employee continues from the first unanswered question.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from aiogram import Bot, F, Router
-from aiogram.exceptions import TelegramBadRequest
+from aiogram.exceptions import TelegramAPIError, TelegramBadRequest, TelegramRetryAfter
 from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message, PollAnswer
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.handlers.formatting import (
@@ -220,6 +222,20 @@ async def _final_result(
     return text, markup
 
 
+async def _private_retake(session: AsyncSession, user: User, test_id: int) -> bool:
+    """A test taken in a group is retaken here: the employee finished it and an admin allowed a
+    retake (the group polls are already voted, so it cannot be done again there)."""
+    if await attempt_service.get_in_progress(session, test_id, user.id) is not None:
+        return False  # the current group attempt goes on in the group
+    finished = (
+        await session.execute(
+            select(TestAttempt.id).where(TestAttempt.test_id == test_id, TestAttempt.user_id == user.id).limit(1)
+        )
+    ).scalar_one_or_none()
+    assignment = await attempt_service.get_assignment(session, test_id, user.id)
+    return finished is not None and assignment is not None and assignment.retake_allowed
+
+
 async def open_test_in_private(
     bot: Bot, chat_id: int, session: AsyncSession, user: User, test_id: int
 ) -> tuple[StartError | None, bool]:
@@ -229,8 +245,8 @@ async def open_test_in_private(
     the group button opens."""
     from app.services import group_tests
 
-    if await group_tests.runs_in_group(session, test_id):  # answered in the group, never here
-        return StartError.IN_GROUP, False
+    if await group_tests.runs_in_group(session, test_id) and not await _private_retake(session, user, test_id):
+        return StartError.IN_GROUP, False  # answered in the group, never here
     result = await attempt_service.start_attempt(session, user, test_id, chat_id=chat_id)
     if result.error is not None:
         return result.error, False
@@ -374,11 +390,24 @@ async def on_poll_answer(poll_answer: PollAnswer, session: AsyncSession, bot: Bo
         text, markup = await _final_result(session, test, attempt)
         await bot.send_message(chat_id, text, reply_markup=markup)
         return
-    if attempt.status == AttemptStatus.IN_PROGRESS:
-        await send_current_question(bot, chat_id, session, attempt)
-        return
-    text, markup = await _final_result(session, test, attempt)
-    await bot.send_message(chat_id, text, reply_markup=markup)
+    try:
+        if attempt.status == AttemptStatus.IN_PROGRESS:
+            await send_current_question(bot, chat_id, session, attempt)
+            return
+        text, markup = await _final_result(session, test, attempt)
+        await bot.send_message(chat_id, text, reply_markup=markup)
+    except TelegramAPIError as exc:
+        # The answer is saved; Telegram did not take the next message (flood limit, network): give a
+        # button instead of leaving the employee without a question.
+        logger.warning("Next question not sent", extra={"attempt_id": attempt.id, "error": str(exc)[:200]})
+        if isinstance(exc, TelegramRetryAfter):
+            await asyncio.sleep(exc.retry_after + 1)
+        try:
+            await bot.send_message(
+                chat_id, t("quiz.next_failed"), reply_markup=kb([(t("quiz.btn.close"), EmpCB(a="next", id=attempt.id))])
+            )
+        except TelegramAPIError:
+            pass
 
 
 @router.callback_query(EmpCB.filter(F.a == "time"))
