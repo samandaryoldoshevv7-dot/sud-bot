@@ -87,10 +87,19 @@ async def run_tick(bot: Bot | None, session_maker: async_sessionmaker[AsyncSessi
             .all()
         )
         for test_id in to_announce:
-            await launch_test(bot, session_maker, test_id)
+            try:
+                await launch_test(bot, session_maker, test_id)
+            except Exception:  # one test must not stop the tick (expiries, reminders, closing)
+                logger.exception("Launching a test failed", extra={"test_id": test_id})
         # Group tests: finish interrupted posting, then close ended tests in their groups.
-        report["resumed_posts"] = await group_tests.resume_unsent_posts(bot, session_maker)
-        report["finalized_posts"] = await group_tests.finalize_posts(bot, session_maker)
+        try:
+            report["resumed_posts"] = await group_tests.resume_unsent_posts(bot, session_maker)
+        except Exception:
+            logger.exception("Resuming group posts failed")
+        try:
+            report["finalized_posts"] = await group_tests.finalize_posts(bot, session_maker)
+        except Exception:
+            logger.exception("Closing group tests failed")
 
         hours = int(await settings_service.get_value(session, "reminder_hours_before"))
         if hours > 0:

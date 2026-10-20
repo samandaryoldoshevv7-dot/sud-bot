@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -60,6 +60,12 @@ async def migrate_chat(session: AsyncSession, old_chat_id: int, new_chat_id: int
     group = await get_by_chat(session, old_chat_id)
     if group and await get_by_chat(session, new_chat_id) is None:
         group.chat_id = new_chat_id
+        from app.models import GroupTestPost
+
+        # Tests already posted there go on in the new chat (closing them, sending the rest).
+        await session.execute(
+            update(GroupTestPost).where(GroupTestPost.chat_id == old_chat_id).values(chat_id=new_chat_id)
+        )
         await session.commit()
 
 

@@ -360,11 +360,11 @@ async def test_run_waits_for_the_ai_limit_and_continues_by_itself(tg, session_ma
     monkeypatch.setattr(mat, "make_generator", factory(llm))
     waits = []
 
-    async def fake_wait(session_maker_, material_id, at):
+    async def fake_wait(session_maker_, material_id, token):
         async with session_maker_() as session:
             row = await session.get(BotSetting, f"deep_auto:{material_id}")
             assert row is not None and row.value["chat"] == ADMIN  # remembered across a restart
-        waits.append(at)
+        waits.append(token)
         llm.limit_after = None  # the limit is back
         return True
 
@@ -482,3 +482,48 @@ async def make_test_for(session, material_id):
     from tests.factories import make_test
 
     return await make_test(session, question_count=5, material_ids=[material_id])
+
+
+async def test_model_that_only_repeats_known_rules_costs_a_bounded_number_of_calls(session_maker):
+    """A second file with the same rules and a model that ignores the "already covered" list: each
+    chunk gets two passes, then it is used up — no endless paid AI calls."""
+    first = await make_material_with_text(session_maker, law_text(20), title="Asl", file_name="asl.pdf")
+    await deep.run(session_maker, first, factory(FactLLM()))
+
+    class Stubborn(FactLLM):
+        def _generate(self, user):
+            return super()._generate(user.replace("ALREADY COVERED", "IGNORED LIST"))
+
+    second = await make_material_with_text(session_maker, law_text(20), title="Nusxa", file_name="n.pdf")
+    llm = Stubborn()
+    report = await deep.run(session_maker, second, factory(llm))
+    async with session_maker() as session:
+        chunks = await session.execute(select(func.count(SourceChunk.id)).where(SourceChunk.material_id == second))
+        n_chunks = chunks.scalar_one()
+    assert report.status == deep.EXHAUSTED and report.total == 0
+    assert llm.calls.count("generation") <= 2 * (1 + deep.DUPLICATE_RETRIES) * n_chunks
+
+
+async def test_leftover_waiting_key_does_not_block_the_button(tg, session_maker, monkeypatch):  # noqa: F811
+    """A waiting key whose run is gone (crash) must not make 🧠 answer "continuing now" forever."""
+    from app.handlers.admin import materials as mat
+    from app.models import BotSetting
+
+    mid = await make_material_with_text(session_maker, law_text(6), title="Qonun", file_name="qonun.pdf")
+    monkeypatch.setattr(mat, "make_generator", factory(FactLLM()))
+    monkeypatch.setattr(mat, "ai_available", lambda: True)
+    async with session_maker() as session:
+        await make_employee(session, ADMIN, "Admin Bosh")
+        session.add(BotSetting(key=f"deep_auto:{mid}", value={"at": "2030-01-01T00:00:00+00:00", "chat": ADMIN,
+                                                             "token": "old"}))  # fmt: skip
+        await session.commit()
+    from app.services import background
+
+    await tg(callback_update(ADMIN, AdminCB(s="mat_deep", id=mid).pack()))
+    for _ in range(200):
+        if background.running_count() == 0:
+            break
+        await asyncio.sleep(0.05)
+    async with session_maker() as session:
+        assert await session.get(BotSetting, f"deep_auto:{mid}") is None
+        assert len((await session.execute(select(Question))).unique().scalars().all()) == 6  # it really ran

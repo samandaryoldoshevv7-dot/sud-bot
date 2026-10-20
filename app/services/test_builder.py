@@ -167,7 +167,13 @@ async def clone_test(session: AsyncSession, test_id: int, title: str) -> Test:
         audience=src.audience,
     )
     users = await assignments.assigned_user_ids(session, test_id)
+    wizard = (
+        await session.execute(select(func.count(TestMaterial.id)).where(TestMaterial.test_id == test_id))
+    ).scalar_one()
     clone = await create_test(session, data, src.created_by_id)
+    if not wizard:  # a ➕ Test yaratish draft: files only (TestSource), stays a mixed draft when resumed
+        await session.execute(delete(TestMaterial).where(TestMaterial.test_id == clone.id))
+        await session.commit()
     if users:
         await assignments.assign_users(session, clone.id, users)
     return clone
@@ -314,6 +320,15 @@ async def _recently_used_question_ids(session: AsyncSession, exclude_test_id: in
         TestQuestion.test_id.in_(select(recent_tests.c.id)), TestQuestion.question_id.is_not(None)
     )
     return set((await session.execute(stmt)).scalars().all())
+
+
+PICK_LOCK_KEY = 0x7E57_9A11  # "put questions into a test" runs one at a time (no question in two tests)
+
+
+async def lock_question_picking(session: AsyncSession) -> None:
+    """Until this transaction ends, no other build puts questions into a test: read the questions
+    other tests hold after taking it, so two builds never take the same one."""
+    await session.execute(text("SELECT pg_advisory_xact_lock(:k)"), {"k": PICK_LOCK_KEY})
 
 
 async def questions_used_by_other_tests(session: AsyncSession, test_id: int) -> set[int]:
@@ -491,6 +506,11 @@ async def _assemble(
 
     async def add(questions: list[Question]) -> None:
         nonlocal next_position
+        # Another build may have taken some of them meanwhile: re-check under the lock.
+        await lock_question_picking(session)
+        taken = await questions_used_by_other_tests(session, test.id)
+        used_ids.update(taken)
+        questions = [q for q in questions if q.id not in taken]
         topic_ids = {q.topic_id for q in questions if q.topic_id}
         names: dict[int, str] = {}
         if topic_ids:

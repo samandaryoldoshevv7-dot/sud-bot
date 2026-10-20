@@ -31,7 +31,7 @@ from datetime import datetime
 from enum import Enum
 
 from aiogram import Bot
-from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError, TelegramRetryAfter
+from aiogram.exceptions import TelegramAPIError, TelegramBadRequest, TelegramForbiddenError, TelegramRetryAfter
 from aiogram.types import InlineKeyboardMarkup
 from aiogram.types import User as TgUser
 from sqlalchemy import func, select, update
@@ -51,6 +51,7 @@ from app.models import (
     QuestionOption,
     Test,
     TestAttempt,
+    TestAudience,
     TestQuestion,
     TestStatus,
     User,
@@ -183,6 +184,11 @@ async def _call(coro_factory, *, what: str):
                 return None
             logger.warning("Telegram rejected group call", extra={"what": what, "error": str(exc)[:200]})
             return None
+        except TelegramAPIError as exc:
+            # Bot removed from the group, chat moved to a supergroup, Telegram down…: one group must
+            # not stop the other groups' tests (the scheduler goes on with the next one).
+            logger.warning("Telegram group call failed", extra={"what": what, "error": str(exc)[:200]})
+            return None
     logger.warning("Telegram flood control: giving up", extra={"what": what})
     return None
 
@@ -299,13 +305,20 @@ async def _send_question(bot: Bot, session: AsyncSession, post: GroupTestPost, t
     spec = quiz_polls.build_for(tq, list(gqm.opts), gqm.position, total, test.answer_reveal)
     if spec is not None:
         if spec.preface:
-            await _call(lambda: bot.send_message(post.chat_id, spec.preface), what="question-text")
-        msg = await _call(lambda: bot.send_poll(post.chat_id, **quiz_polls.send_kwargs(spec)), what="question-poll")
+            await _call(lambda: bot.send_message(post.chat_id, spec.preface, protect_content=True),
+                        what="question-text")  # fmt: skip
+        # protect_content: a poll forwarded out of the group could be answered by outsiders.
+        msg = await _call(
+            lambda: bot.send_poll(post.chat_id, **quiz_polls.send_kwargs(spec), protect_content=True),
+            what="question-poll",
+        )
         if msg is not None and msg.poll is not None:
             gqm.poll_id = msg.poll.id
             return msg
     return await _call(
-        lambda: bot.send_message(post.chat_id, render_question(tq, gqm, total), reply_markup=answer_keyboard(gqm)),
+        lambda: bot.send_message(
+            post.chat_id, render_question(tq, gqm, total), reply_markup=answer_keyboard(gqm), protect_content=True
+        ),
         what="question",
     )
 
@@ -382,6 +395,10 @@ async def start_in_group(
     async with session_maker() as session:
         test = await session.get(Test, test_id)
         if test is None:
+            return None, False
+        if test.audience == TestAudience.USERS:
+            # A test for selected employees runs only in their private chat with the bot.
+            logger.warning("Test for selected employees is not posted to a group", extra={"test_id": test_id})
             return None, False
         group = await session.get(Group, group_id or test.group_id) if (group_id or test.group_id) else None
         if group is None or not group.is_active:
@@ -782,7 +799,6 @@ async def active_group_tests(session: AsyncSession, chat_id: int) -> list[Test]:
     now = utcnow()
     group_id = (await session.execute(select(Group.id).where(Group.chat_id == chat_id))).scalar_one_or_none()
     posted = select(GroupTestPost.test_id).where(GroupTestPost.chat_id == chat_id)
-    from app.models import TestAudience
 
     audience = Test.id.in_(posted) | (Test.group_id.is_(None) & (Test.audience != TestAudience.USERS))
     if group_id is not None:

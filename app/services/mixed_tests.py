@@ -40,7 +40,12 @@ from app.models import (
 )
 from app.rag.vector_store import SourceScope
 from app.services.question_generation import GenerationRequest, QuestionGenerator
-from app.services.test_builder import questions_used_by_other_tests, select_bank_questions, snapshot_question
+from app.services.test_builder import (
+    lock_question_picking,
+    questions_used_by_other_tests,
+    select_bank_questions,
+    snapshot_question,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -261,6 +266,12 @@ async def _build(
             break
         remaining -= await take(source, remaining)
 
+    # Another build may have taken some of these meanwhile: re-check under the lock (held until the
+    # commit below), so no question ends up in two tests.
+    await lock_question_picking(session)
+    taken = await questions_used_by_other_tests(session, test_id)
+    for sid in picked:
+        picked[sid] = [q for q in picked[sid] if q.id not in taken]
     groups = [picked[s.id] for s in ready]
     for g in groups:
         rng.shuffle(g)
@@ -289,11 +300,19 @@ class PrefillReport:
 
 
 async def unused_bank_count(session: AsyncSession, test_id: int, material_id: int) -> int:
+    """Bank questions of this file that the test could still take (same filters as the build)."""
+    from app.models import Difficulty
+    from app.services import settings_service
+
     used = await questions_used_by_other_tests(session, test_id)
+    test = await session.get(Test, test_id)
     stmt = select(Question.id).where(
         Question.source_material_id == material_id,
         Question.status.in_([QuestionStatus.APPROVED, QuestionStatus.PENDING]),
+        Question.option_count >= (test.option_count if test is not None else 0),
     )
+    if await settings_service.only_hard(session):
+        stmt = stmt.where(Question.difficulty == Difficulty.HARD)
     return sum(1 for qid in (await session.execute(stmt)).scalars() if qid not in used)
 
 

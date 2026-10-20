@@ -65,6 +65,25 @@ _HEADER_FILL = PatternFill("solid", fgColor="1F4E78")
 _HEADER_FONT = Font(bold=True, color="FFFFFF")
 
 
+FORMULA_STARTS = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _safe_text(value: object) -> object:
+    """Text that a spreadsheet would run as a formula (e.g. a name "=HYPERLINK(...)") stays text."""
+    if isinstance(value, str) and value.startswith(FORMULA_STARTS):
+        return "'" + value
+    return value
+
+
+def _neutralize_formulas(wb: Workbook) -> None:
+    for ws in wb.worksheets:
+        for row in ws.iter_rows():
+            for cell in row:
+                if isinstance(cell.value, str) and cell.value.startswith(FORMULA_STARTS):
+                    cell.value = _safe_text(cell.value)
+                    cell.data_type = "s"
+
+
 def _style_sheet(ws: Worksheet, widths: dict[int, int] | None = None) -> None:
     for cell in ws[1]:
         cell.fill = _HEADER_FILL
@@ -294,6 +313,7 @@ async def build_test_report_xlsx(session: AsyncSession, test_id: int) -> tuple[b
         )
     _style_sheet(ws, {1: 40})
 
+    _neutralize_formulas(wb)
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue(), f"test_{test.id}_hisobot_{to_local(utcnow()):%Y%m%d_%H%M}.xlsx"
@@ -405,6 +425,7 @@ async def build_summary_report_xlsx(session: AsyncSession, since: datetime | Non
     _date_format(ws, [4, 5])
     _style_sheet(ws)
 
+    _neutralize_formulas(wb)
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue(), f"umumiy_hisobot_{to_local(utcnow()):%Y%m%d_%H%M}.xlsx"
@@ -427,6 +448,6 @@ async def build_test_report_csv(session: AsyncSession, test_id: int) -> tuple[by
         row = _attempt_row(user, test.title, attempt)
         row[5] = fmt_dt(attempt.started_at)
         row[6] = fmt_dt(attempt.completed_at) if attempt.completed_at else ""
-        writer.writerow(row)
+        writer.writerow([_safe_text(v) for v in row])
     # UTF-8 BOM so Excel opens Cyrillic/Uzbek text correctly.
     return ("﻿" + buf.getvalue()).encode("utf-8"), f"test_{test.id}_natijalar.csv"

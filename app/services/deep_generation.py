@@ -121,12 +121,21 @@ async def claim(
         )
     ).scalar_one_or_none()
     if job is None:
-        job = MaterialGenerationJob(
-            material_id=material_id, status=RUNNING, target=target, created=0, duplicates=0, rejected=0,
-            pass_no=1, cursor=-1, notify_chat_id=notify_chat_id,
+        from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+        # Two quick first presses: only one row is created, the other press sees it as running.
+        inserted = await session.execute(
+            pg_insert(MaterialGenerationJob)
+            .values(material_id=material_id, status=RUNNING, target=target, created=0, duplicates=0, rejected=0,
+                    pass_no=1, cursor=-1, notify_chat_id=notify_chat_id)
+            .on_conflict_do_nothing(index_elements=[MaterialGenerationJob.material_id])
+            .returning(MaterialGenerationJob.material_id)
         )  # fmt: skip
-        session.add(job)
-    elif job.status == RUNNING:
+        await session.commit()
+        if inserted.scalar_one_or_none() is None:
+            return None
+        return await session.get(MaterialGenerationJob, material_id)
+    if job.status == RUNNING:
         await session.commit()
         return None
     else:
@@ -233,6 +242,9 @@ async def _run(
         return
     report.duplicate_reasons = generator.duplicates  # filled as the run goes
     errors_in_row = 0
+    # A chunk that gave nothing new (only known rules, or answers that failed the checks) gets one more
+    # chance in a later pass; the second time it is used up. Bounds the AI calls per chunk.
+    strikes: dict[int, int] = {}
     async with session_maker() as session:
         job = await session.get(MaterialGenerationJob, material_id)
         assert job is not None
@@ -263,7 +275,8 @@ async def _run(
                 ).scalars()
             )
             new_in_pass = 0
-            learning = False
+            retry_later = False  # some chunk is not used up yet (one more chance next pass)
+            failed_in_pass = 0  # chunks skipped because of an AI error: never called "used up"
             for chunk_id in chunk_ids:
                 if have >= target:
                     report.status = DONE
@@ -299,6 +312,7 @@ async def _run(
                     # Only rules the bank already has (e.g. from another file): the next request lists
                     # them as covered, so the model can still find this chunk's new facts.
                 if failed:
+                    failed_in_pass += 1
                     continue
                 for q in created:
                     if q.difficulty == Difficulty.HARD:
@@ -307,17 +321,23 @@ async def _run(
                         medium += 1
                 have += len(created)
                 new_in_pass += len(created)
-                if only_known:
-                    learning = True  # not used up: asked again next pass, the known rules listed as covered
-                elif not created:
-                    chunk.gen_exhausted = True  # nothing new here any more
+                if not created:
+                    model_said_nothing = result.rejected.get("model_rejected_source", 0) > 0 or not result.rejected
+                    strikes[chunk_id] = strikes.get(chunk_id, 0) + 1
+                    if model_said_nothing or strikes[chunk_id] >= 2:
+                        chunk.gen_exhausted = True  # nothing new here any more
+                    else:
+                        retry_later = True  # known rules / failed checks: one more try, with them listed
                 job = await session.get(MaterialGenerationJob, material_id)  # type: ignore[assignment]
                 job.cursor = chunk.chunk_index
                 job.updated_at = utcnow()
                 await session.commit()
                 if progress:
                     stats_now = await material_stats(session, material_id)
-                    await progress(have, target, stats_now.chunks_exhausted, stats_now.chunks)
+                    try:
+                        await progress(have, target, stats_now.chunks_exhausted, stats_now.chunks)
+                    except Exception as exc:  # a Telegram hiccup must not stop the generation
+                        logger.info("Deep generation: progress not shown", extra={"error": str(exc)[:200]})
             remaining = (
                 await session.execute(
                     select(func.count(SourceChunk.id)).where(
@@ -325,7 +345,11 @@ async def _run(
                     )
                 )
             ).scalar_one()
-            if remaining == 0 or (full_pass and new_in_pass == 0 and not learning):
+            if failed_in_pass and new_in_pass == 0:
+                # Chunks were skipped because of AI errors: the material is not used up, only paused.
+                report.status, report.error = PAUSED, report.error or "AI service unavailable"
+                return
+            if remaining == 0 or (full_pass and new_in_pass == 0 and not retry_later):
                 break  # every chunk is used up, or a whole pass over the material found nothing new
             job = await session.get(MaterialGenerationJob, material_id)  # type: ignore[assignment]
             job.pass_no += 1
