@@ -166,3 +166,29 @@ def test_admin_ids_alias(monkeypatch):
     monkeypatch.delenv("ADMIN_TELEGRAM_IDS", raising=False)
     monkeypatch.setenv("ADMIN_IDS", "42,43")
     assert Settings(_env_file=None).admin_ids == frozenset({42, 43})
+
+
+async def test_second_copy_of_the_bot_is_reported_to_admins(monkeypatch):
+    """The same token polled elsewhere (TelegramConflictError again and again): admins are told once."""
+    import asyncio
+
+    from app.services import conflict_watch
+
+    told = []
+
+    async def notify():
+        told.append(1)
+
+    watch = conflict_watch.install(notify)
+    log = logging.getLogger("aiogram.dispatcher")
+    try:
+        log.error("Failed to fetch updates - TelegramConflictError: Conflict: terminated by other getUpdates")
+        await asyncio.sleep(0)
+        assert not told and not conflict_watch.conflict_now()  # a redeploy overlap: a few are normal
+        for _ in range(conflict_watch.THRESHOLD + 5):
+            log.error("Failed to fetch updates - TelegramConflictError: Conflict: terminated by other getUpdates")
+        await asyncio.sleep(0.05)
+        assert told == [1] and conflict_watch.conflict_now()  # once, not for every log line
+    finally:
+        logging.getLogger("aiogram").removeHandler(watch)
+        conflict_watch._watch = None

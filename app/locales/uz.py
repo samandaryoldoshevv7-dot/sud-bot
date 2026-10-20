@@ -970,6 +970,13 @@ TEXTS: dict[str, str] = {
     "settings.btn.emb_on": "🧠 Aqlli qidiruvni qayta yoqish",
     "settings.emb_on_ok": "✅ Aqlli qidiruv yoqildi.",
     "settings.emb_on_fail": "❌ Model yuklanmadi — oddiy matn qidiruvi ishlatiladi.",
+    "bot.polling_conflict": (
+        "⚠️ <b>Bot boshqa joyda ham ishga tushirilgan</b> (xuddi shu BOT_TOKEN bilan).\n\n"
+        "Telegram ikkala nusxaga navbatma-navbat ulanadi, shuning uchun bot ba'zan javob bermaydi va "
+        "«qotib qoladi».\n\nYechim: boshqa nusxani o'chiring (kompyuterdagi, boshqa Railway loyihasi yoki "
+        "servisidagi, eski hostingdagi). Topilmasa: @BotFather → /revoke → yangi tokenni faqat Railway'dagi "
+        "BOT_TOKEN ga qo'ying."
+    ),
     "emb.switched_off": (
         "⚠️ Fayl indekslanayotganda bot to'xtab qoldi — server xotirasi yetmagan bo'lishi mumkin.\n\n"
         "Bot endi to'xtab qolmasligi uchun aqlli qidiruv (embedding) o'chirildi. Materiallar va test tuzish "
