@@ -65,6 +65,7 @@ async def refresh_test_memberships(bot: Bot, session: AsyncSession, user: User) 
 
 
 STATE_KEY = {
+    attempt_service.MyTestState.PAUSED: "emp.state.paused",
     attempt_service.MyTestState.NOT_STARTED: "emp.state.new",
     attempt_service.MyTestState.IN_PROGRESS: "emp.state.progress",
     attempt_service.MyTestState.COMPLETED: "emp.state.done",

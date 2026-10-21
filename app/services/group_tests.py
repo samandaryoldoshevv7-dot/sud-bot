@@ -490,11 +490,7 @@ async def _get_or_start_attempt(
     # Legacy posts with shared question messages: the attempt uses the group's letters; header-only
     # posts: the attempt gets its own (shuffled) layout like any private test.
     layout = await _layout(session, post.id) or None
-    # A retake runs in the bot's private chat (every poll here is already voted); a group vote
-    # never starts one, and a vote cast while the test is paused is not lost.
-    result = await start_attempt(
-        session, user, test.id, chat_id=None, now=now, layout=layout, first_only=True, ignore_pause=True
-    )
+    result = await start_attempt(session, user, test.id, chat_id=None, now=now, layout=layout)
     return result.attempt
 
 

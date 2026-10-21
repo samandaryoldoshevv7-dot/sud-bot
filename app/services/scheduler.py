@@ -20,7 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.config import get_settings
 from app.locales import t
 from app.models import DeliveryMode, ParticipationStatus, Test, TestStatus
-from app.services import background, group_tests, settings_service
+from app.services import group_tests, settings_service
 from app.services.attempts import expire_attempts_list
 from app.services.notifications import announce_test, notify_admins, remind_unfinished
 from app.services.test_builder import activate_due, expire_due
@@ -62,16 +62,6 @@ async def launch_test(bot: Bot, session_maker: async_sessionmaker[AsyncSession],
             await notify_admins(bot, t("gt.admin_post_failed_auto", id=test_id))
 
 
-TICK_WAIT_SECONDS = 20.0  # longer group posting (hundreds of polls, flood limits) goes on in the background
-
-
-async def _bounded(coro, name: str) -> None:
-    """Run ``coro`` but wait for it at most TICK_WAIT_SECONDS: posting a 300-question test into a
-    group can take many minutes, and meanwhile the tick must still close attempts and send results."""
-    task = background.spawn(coro, name=name)
-    await asyncio.wait({task}, timeout=TICK_WAIT_SECONDS)
-
-
 async def run_tick(bot: Bot | None, session_maker: async_sessionmaker[AsyncSession]) -> dict:
     now = utcnow()
     report: dict = {}
@@ -97,10 +87,15 @@ async def run_tick(bot: Bot | None, session_maker: async_sessionmaker[AsyncSessi
             .all()
         )
         for test_id in to_announce:
-            # In the background (bounded wait): one test must not stop the tick (expiries, results).
-            await _bounded(launch_test(bot, session_maker, test_id), name=f"launch-test-{test_id}")
+            try:
+                await launch_test(bot, session_maker, test_id)
+            except Exception:  # one test must not stop the tick (expiries, reminders, closing)
+                logger.exception("Launching a test failed", extra={"test_id": test_id})
         # Group tests: finish interrupted posting, then close ended tests in their groups.
-        await _bounded(group_tests.resume_unsent_posts(bot, session_maker), name="resume-group-posts")
+        try:
+            report["resumed_posts"] = await group_tests.resume_unsent_posts(bot, session_maker)
+        except Exception:
+            logger.exception("Resuming group posts failed")
         try:
             report["finalized_posts"] = await group_tests.finalize_posts(bot, session_maker)
         except Exception:

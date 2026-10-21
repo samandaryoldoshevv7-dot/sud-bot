@@ -100,6 +100,7 @@ TEXTS: dict[str, str] = {
     "emp.no_tests": "📭 Hozircha siz uchun ochiq test yo'q.",
     "emp.no_results": "📭 Siz hali birorta testni yakunlamagansiz.",
     "emp.my_tests.title": "📚 <b>TESTLARIM</b>",
+    "emp.state.paused": "⏸ Vaqtincha to'xtatilgan",
     "emp.state.new": "🟢 Ishlanmagan",
     "emp.state.progress": "🟡 Jarayonda",
     "emp.state.done": "🔵 Tugatilgan",

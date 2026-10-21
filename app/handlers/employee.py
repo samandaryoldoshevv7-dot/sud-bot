@@ -304,6 +304,9 @@ async def cb_answer(callback: CallbackQuery, callback_data: AnsCB, session: Asyn
     result = await attempt_service.submit_answer(session, user, callback_data.at, callback_data.pos, callback_data.o)
     message = callback.message
 
+    if result.outcome == AnswerOutcome.BLOCKED:
+        await callback.answer(t("start.inactive"), show_alert=True)
+        return
     if result.outcome == AnswerOutcome.DUPLICATE:
         await callback.answer(t("gt.alert.duplicate"), show_alert=True)
         return
@@ -372,6 +375,9 @@ async def on_poll_answer(poll_answer: PollAnswer, session: AsyncSession, bot: Bo
     result = await attempt_service.submit_answer(
         session, user, poll.attempt_id, position, LETTERS[poll_answer.option_ids[0]]
     )
+    if result.outcome == AnswerOutcome.BLOCKED:
+        await bot.send_message(chat_id, t("start.inactive"))
+        return
     if result.outcome == AnswerOutcome.PAUSED:
         await bot.send_message(chat_id, t("quiz.paused"))
         return
@@ -438,21 +444,28 @@ async def cb_close_result(
         return
     test = await session.get(Test, attempt.test_id)
     assert test is not None
+    if user.status != UserStatus.ACTIVE:
+        await callback.answer(t("start.inactive"), show_alert=True)
+        return
+    if test.paused:
+        await callback.answer(t("quiz.paused"), show_alert=True)
+        return
     now = utcnow()
     if attempt.status == AttemptStatus.IN_PROGRESS and now >= attempt.deadline_at:
         await attempt_service.finalize_attempt(session, attempt, AttemptStatus.EXPIRED, now)
         await session.commit()
     await callback.answer()
     message = callback.message
+    if attempt.status == AttemptStatus.IN_PROGRESS and await attempt_service.current_question(session, attempt):
+        await send_current_question(bot, message.chat.id, session, attempt)
+    else:
+        text, markup = await _final_result(session, test, attempt)
+        await message.answer(text, reply_markup=markup)
+    # Keep the retry button until Telegram has accepted the next message.
     try:
         await message.edit_reply_markup(reply_markup=None)
     except TelegramBadRequest:
         pass
-    if attempt.status == AttemptStatus.IN_PROGRESS and await attempt_service.current_question(session, attempt):
-        await send_current_question(bot, message.chat.id, session, attempt)
-        return
-    text, markup = await _final_result(session, test, attempt)
-    await message.answer(text, reply_markup=markup)
 
 
 @router.callback_query(EmpCB.filter(F.a == "res"))

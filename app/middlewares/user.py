@@ -48,7 +48,7 @@ class UserMiddleware(BaseMiddleware):
             try:
                 if chat is None or chat.type == "private":
                     data["user"] = await upsert_user(session, tg_user, private_chat=chat is not None)
-                elif isinstance(inner, Message):
+                elif isinstance(inner, (Message, CallbackQuery)):
                     group = await group_service.get_by_chat(session, chat.id)
                     if group is not None and group.is_active:
                         user = await upsert_user(session, tg_user)

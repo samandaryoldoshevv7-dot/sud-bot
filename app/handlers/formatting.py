@@ -152,11 +152,10 @@ def corrections_text(items: list[tuple[UserAnswer, TestQuestion]], layout: list[
         item = by_tq.get(tq.id)
         if item:
             letters = dict(displayed_options(tq, item))
-            shown = dict(zip(item["opts"], "ABCDE", strict=False))  # original letter → letter shown here
-            # From the original option: in a group the employee may have answered another post's
-            # shuffle, so the stored display letter need not match this layout.
-            sel_disp = shown.get(answer.selected_option, answer.selected_display)
-            corr_disp = shown.get(tq.correct_option, "?")
+            sel_disp = answer.selected_display
+            corr_disp = next(
+                (d for d, orig in zip("ABCDE", item["opts"], strict=False) if orig == tq.correct_option), "?"
+            )
         else:
             letters = dict(tq.options)
             sel_disp, corr_disp = answer.selected_option, tq.correct_option
