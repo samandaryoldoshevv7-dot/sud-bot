@@ -73,6 +73,8 @@ def database_url() -> str:
     try:
         asyncio.run(_recreate_database(TEST_DB_URL))
     except Exception as exc:  # pragma: no cover - environment dependent
+        if os.environ.get("REQUIRE_TEST_DATABASE") == "1":
+            pytest.fail(f"Required test PostgreSQL is unavailable: {exc}")
         pytest.skip(f"PostgreSQL not available for tests: {exc}")
     _run_migrations(TEST_DB_URL)
     return TEST_DB_URL

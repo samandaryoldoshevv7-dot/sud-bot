@@ -3,6 +3,7 @@
 from sqlalchemy import select
 
 from app.keyboards.callbacks import AdminCB
+from app.locales import t
 from app.models import Group, Material, MaterialStatus, News, Question, Test, TestAttempt, User
 from app.services import attempts as attempt_service
 from app.services import groups as group_service
@@ -87,7 +88,7 @@ async def test_every_admin_screen_opens(tg, session_maker):  # noqa: F811
         tg.session.clear()
         await tg(callback_update(ADMIN, cb.pack()))
         out = tg.session.texts() + tg.session.alerts()
-        if any("Kutilmagan xatolik" in x for x in out):
+        if any("Kutilmagan xatolik" in x or t("errors.not_admin") in x or t("errors.stale_button") in x for x in out):
             failures.append(cb.pack())
     tg.session.clear()
     await tg(message_update(ADMIN, "👨‍💼 Admin panel"))
