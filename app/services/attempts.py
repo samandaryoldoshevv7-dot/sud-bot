@@ -666,6 +666,7 @@ async def add_time(session: AsyncSession, attempt_id: int, seconds: int, now: da
         attempt.completed_at = None
         attempt.passed = None
         attempt.duration_seconds = None
+        attempt.expiry_notified_at = None
     else:
         await session.commit()
         raise ValueError("attempt_finished")

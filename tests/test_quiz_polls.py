@@ -49,7 +49,7 @@ async def test_questions_come_as_quiz_polls_and_answers_are_final(tg, session_ma
     assert len(poll.options) == 4 and poll.allows_multiple_answers is False
     assert poll.correct_option_ids == [await _correct_index(session_maker, attempt_id, 0)]
     assert poll.allows_revoting is False and poll.shuffle_options is False
-    assert poll.explanation and poll.explanation.startswith("📚 ") and len(poll.explanation) <= 200
+    assert poll.explanation and poll.explanation.startswith("💡 ") and len(poll.explanation) <= 200
     assert [b.text for row in poll.reply_markup.inline_keyboard for b in row] == ["⏳ Qolgan vaqt"]
     assert not any("○ <b>A)</b>" in x for x in tg.session.texts())  # not the classic text question
 

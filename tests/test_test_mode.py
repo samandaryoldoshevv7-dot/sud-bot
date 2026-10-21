@@ -49,7 +49,8 @@ async def test_group_test_runs_in_the_group_as_visible_quiz_polls(tg, session_ma
     tg.session.clear()
     await launch_test(tg.bot, session_maker, test_id)
     sent = tg.session.sent_to(GROUP_CHAT)
-    assert len(sent) == 1 and "YANGI TEST" in sent[0].text and sent[0].reply_markup is None  # short header
+    assert len(sent) == 1 and "YANGI TEST" in sent[0].text
+    assert sent[0].reply_markup.inline_keyboard[0][0].text == "📊 Mening natijam"
     polls = _group_polls(tg)
     assert [p.question[:5] for p in polls] == ["[1/4]", "[2/4]", "[3/4]", "[4/4]"]
     # Not anonymous: once a member has answered, they see who chose what; nobody can change a vote.

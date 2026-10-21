@@ -1,24 +1,8 @@
-"""Tests started from a Telegram group.
+"""Shared group quiz polls with per-user durable answers and private feedback.
 
-Design (chosen for privacy and exact per-user accounting):
-* The bot posts ONE header message ("📚 YANGI TEST", questions, time) with ▶️ TESTNI BOSHLASH.
-  Pressing it identifies the employee by ``callback.from_user.id``, creates THEIR OWN attempt (their
-  personal timer starts) and opens the bot's private chat, where the questions are answered — so
-  other group members never see anybody's answers.
-* Legacy posts created before this design also have one shared message per question with ``A``
-  ``B`` ``C`` ``D`` buttons; those keep working until the test ends.
-* Native Telegram polls are NOT used: they cannot enforce "first answer is final", hide the correct
-  answer per user, or be tied to our attempts. Custom inline keyboards are handled server-side.
-* The answering user is ALWAYS ``callback.from_user`` (callback data only carries the message id and
-  the letter), so nobody can answer on behalf of someone else.
-* One answer per (user, test, question) is enforced by a unique constraint plus a row lock on the
-  attempt; answers are immutable (DB trigger). Feedback is private: a short callback alert (correct /
-  wrong) plus, in the bot's private chat, the full answer card with the "why" explanation. Other group
-  members never see someone else's answer, and nothing in the group looks like a vote count.
-* Every employee has their own attempt row; nothing is kept in process memory, so hundreds of people
-  can answer at the same time.
-* When the test ends, each question message shows the correct answer and its explanation (if the
-  admin allows revealing answers). Answer distributions are only in the admin panel and reports.
+Native polls show the immediate verdict. Group result/explanation buttons identify
+only callback.from_user; detailed feedback uses Telegram ephemeral messages.
+Ended group tests publish rankings and retain access to each participant's result.
 """
 
 from __future__ import annotations
@@ -34,7 +18,7 @@ from aiogram import Bot
 from aiogram.exceptions import TelegramAPIError, TelegramBadRequest, TelegramForbiddenError, TelegramRetryAfter
 from aiogram.types import InlineKeyboardMarkup
 from aiogram.types import User as TgUser
-from sqlalchemy import func, select, update
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -59,8 +43,8 @@ from app.models import (
     UserStatus,
 )
 from app.schemas.ai import LETTERS
+from app.services import group_results, settings_service
 from app.services import groups as group_service
-from app.services import settings_service
 from app.services.attempts import (
     answered_question_ids,
     finalize_attempt,
@@ -153,6 +137,9 @@ def render_header(
     if test.description:
         text += "\n\n" + esc(truncate(test.description, 500))
     text += "\n\n" + t("gt.header_hint_group" if in_group else "gt.header_hint")
+    if in_group:
+        text += "\n\n" + f"⏰ Umumiy yakun: {fmt_dt(test.deadline_at)}\nMuddat tugaganda guruhga reyting chiqadi."
+        text += "\n«Mening natijam» va «Javobim va izoh» faqat bosgan odamga ko'rinadi."
     if started is not None:
         text += "\n\n" + t("gt.participants", n=started)
     return text
@@ -309,7 +296,8 @@ async def _send_question(bot: Bot, session: AsyncSession, post: GroupTestPost, t
                         what="question-text")  # fmt: skip
         # protect_content: a poll forwarded out of the group could be answered by outsiders.
         msg = await _call(
-            lambda: bot.send_poll(post.chat_id, **quiz_polls.send_kwargs(spec), protect_content=True),
+            lambda: bot.send_poll(post.chat_id, **quiz_polls.send_kwargs(spec), protect_content=True,
+                                  reply_markup=group_results.explanation_keyboard(gqm.id)),
             what="question-poll",
         )
         if msg is not None and msg.poll is not None:
@@ -342,7 +330,7 @@ async def send_post(bot: Bot, session_maker: async_sessionmaker[AsyncSession], p
                     in_group = await post_has_questions(session, post.id)
                     header = render_header(test, sources=await source_names(session, test.id), in_group=in_group)
                     # The questions follow right below: the header needs no button then.
-                    markup = None if in_group else header_keyboard(post)
+                    markup = group_results.result_keyboard(post.id) if in_group else header_keyboard(post)
                     msg = await _call(
                         lambda: bot.send_message(post.chat_id, header, reply_markup=markup), what="header"
                     )
@@ -696,15 +684,13 @@ async def finalize_posts(bot: Bot, session_maker: async_sessionmaker[AsyncSessio
         ids = list(
             (
                 await session.execute(
-                    update(GroupTestPost)
+                    select(GroupTestPost.id)
                     .where(
                         GroupTestPost.finalized_at.is_(None),
                         GroupTestPost.test_id.in_(
                             select(Test.id).where(Test.status.in_([TestStatus.EXPIRED, TestStatus.CLOSED]))
                         ),
                     )
-                    .values(finalized_at=utcnow())
-                    .returning(GroupTestPost.id)
                 )
             )
             .scalars()
@@ -740,7 +726,7 @@ async def finalize_posts(bot: Bot, session_maker: async_sessionmaker[AsyncSessio
                     ),
                     what="final",
                 )  # fmt: skip
-            started, completed = (
+            started, _completed = (
                 await session.execute(
                     select(
                         func.count(TestAttempt.id),
@@ -752,16 +738,27 @@ async def finalize_posts(bot: Bot, session_maker: async_sessionmaker[AsyncSessio
                 await _call(
                     lambda: bot.edit_message_text(
                         render_header(test, started, finished=True), chat_id=post.chat_id,
-                        message_id=post.header_message_id, reply_markup=None,
+                        message_id=post.header_message_id, reply_markup=group_results.result_keyboard(post.id),
                     ),
                     what="header-final",
                 )  # fmt: skip
-            await _call(
-                lambda: bot.send_message(
-                    post.chat_id, t("gt.closed_summary", title=esc(test.title), started=started, completed=completed)
-                ),
-                what="summary",
-            )
+            pages = await group_results.ranking_pages(session, post, test)
+            delivered = list(post.result_message_ids or [])
+            for page in pages[len(delivered):]:
+                msg = await _call(
+                    lambda page=page: bot.send_message(
+                        post.chat_id, page, reply_markup=group_results.result_keyboard(post.id)
+                    ), what="summary",
+                )
+                if msg is None:
+                    break  # retry the unsent page on the next tick, including after restart
+                delivered.append(msg.message_id)
+                post.result_message_ids = list(delivered)
+                await session.commit()
+            if len(delivered) < len(pages):
+                continue
+            post.finalized_at = utcnow()
+            await session.commit()
             done += 1
             logger.info("Group test finalized", extra={"post_id": post.id, "test_id": test.id})
     return done

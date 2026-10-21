@@ -744,6 +744,10 @@ async def publish(session: AsyncSession, test_id: int, now: datetime | None = No
         duration = test.deadline_at - test.starts_at
         test.starts_at = now
         test.deadline_at = now + duration
+    if test.delivery_mode == DeliveryMode.GROUP:
+        # New group tests have a common finish time and a final leaderboard.
+        # Existing published tests are untouched; private tests keep personal timers.
+        test.deadline_at = min(test.deadline_at, test.starts_at + timedelta(seconds=test.duration_seconds))
     test.published_at = now
     if test.starts_at <= now:
         test.status = TestStatus.ACTIVE
@@ -926,7 +930,7 @@ async def reopen_test(session: AsyncSession, test_id: int, now: datetime | None 
     await session.execute(
         update(GroupTestPost)
         .where(GroupTestPost.test_id == test_id)
-        .values(finalized_at=None, header_message_id=None, posted_all=False)
+        .values(finalized_at=None, header_message_id=None, posted_all=False, result_message_ids=[])
     )
     await session.commit()
     logger.info("Test reopened", extra={"test_id": test_id})

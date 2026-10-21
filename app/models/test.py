@@ -260,6 +260,7 @@ class TestAttempt(TimestampMixin, Base):
     chat_id: Mapped[int | None] = mapped_column(BigInteger)
     last_message_id: Mapped[int | None] = mapped_column(Integer)
     cancelled_reason: Mapped[str | None] = mapped_column(String(255))
+    expiry_notified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     test: Mapped[Test] = relationship(lazy="joined")
 
@@ -325,6 +326,7 @@ class GroupTestPost(TimestampMixin, Base):
     header_message_id: Mapped[int | None] = mapped_column(Integer)
     posted_all: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     finalized_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    result_message_ids: Mapped[list[int]] = mapped_column(JSONB, default=list, server_default="[]", nullable=False)
 
     messages: Mapped[list[GroupQuestionMessage]] = relationship(
         back_populates="post",

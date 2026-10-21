@@ -206,7 +206,8 @@ async def test_group_messages_and_callbacks_end_to_end(tg, session_maker):
     # The bot posts a short header (no button) and every question as a shared Telegram poll.
     assert await group_tests.send_post(tg.bot, session_maker, post_id)
     sent = tg.session.sent_to(GROUP_CHAT)
-    assert len(sent) == 1 and "YANGI TEST" in sent[0].text and sent[0].reply_markup is None
+    assert len(sent) == 1 and "YANGI TEST" in sent[0].text
+    assert sent[0].reply_markup.inline_keyboard[0][0].text == "📊 Mening natijam"
     polls = tg.session.polls()
     assert [p.question[:5] for p in polls] == ["[1/3]", "[2/3]", "[3/3]"]
     assert all(p.is_anonymous is False and len(p.options) == 4 for p in polls)  # who chose what is visible
@@ -303,7 +304,7 @@ async def test_scheduler_starts_group_test_automatically(tg, session_maker):
     await run_tick(tg.bot, session_maker)
     sent = tg.session.sent_to(GROUP_CHAT)
     assert len(sent) == 1 and "YANGI TEST" in sent[0].text and "Savollar quyida" in sent[0].text
-    assert sent[0].reply_markup is None and len(tg.session.polls()) == 2  # the questions come right away
+    assert sent[0].reply_markup is not None and len(tg.session.polls()) == 2  # questions and result access
     await run_tick(tg.bot, session_maker)  # idempotent: nothing posted twice
     assert len(tg.session.sent_to(GROUP_CHAT)) == 1 and len(tg.session.polls()) == 2
 
