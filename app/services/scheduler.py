@@ -19,7 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.config import get_settings
 from app.locales import t
-from app.models import DeliveryMode, ParticipationStatus, Test, TestStatus
+from app.models import AttemptStatus, DeliveryMode, ParticipationStatus, Test, TestAttempt, TestStatus
 from app.services import background, group_tests, settings_service
 from app.services.attempts import expire_attempts_list
 from app.services.notifications import announce_test, notify_admins, remind_unfinished
@@ -83,8 +83,15 @@ async def run_tick(bot: Bot | None, session_maker: async_sessionmaker[AsyncSessi
 
         if bot is None:
             return report
-        for attempt in expired:
-            await notify_time_over(bot, session, attempt)
+        # expire_due/close_test and answer handlers can expire attempts before this
+        # tick. Query the durable marker, not just the rows expired above.
+        pending_results = (await session.execute(select(TestAttempt).where(
+            TestAttempt.status == AttemptStatus.EXPIRED, TestAttempt.expiry_notified_at.is_(None),
+        ))).scalars().all()
+        for attempt in pending_results:
+            if await notify_time_over(bot, session, attempt):
+                attempt.expiry_notified_at = utcnow()
+                await session.commit()
 
         # Announce active tests not yet announced (covers immediate publish and scheduled start).
         to_announce = (
@@ -151,7 +158,7 @@ async def run_tick(bot: Bot | None, session_maker: async_sessionmaker[AsyncSessi
     return report
 
 
-async def notify_time_over(bot: Bot, session: AsyncSession, attempt) -> None:
+async def notify_time_over(bot: Bot, session: AsyncSession, attempt) -> bool:
     """Personal time ran out: tell the employee (❌ TEST VAQTI TUGADI) and show the result."""
     from aiogram.exceptions import TelegramBadRequest
 
@@ -161,8 +168,13 @@ async def notify_time_over(bot: Bot, session: AsyncSession, attempt) -> None:
 
     user = await session.get(User, attempt.user_id)
     test = await session.get(Test, attempt.test_id)
-    if user is None or test is None or not user.has_private_chat:
-        return
+    if user is None or test is None:
+        return True
+    from app.services.group_results import notify_result_in_groups
+
+    await notify_result_in_groups(bot, session, attempt, user)
+    if not user.has_private_chat or user.bot_blocked:
+        return True  # group button always retrieves the persisted result, even for offline users
     if attempt.chat_id and attempt.last_message_id:
         try:  # the last question can no longer be answered
             await bot.edit_message_reply_markup(chat_id=attempt.chat_id, message_id=attempt.last_message_id)
@@ -177,7 +189,15 @@ async def notify_time_over(bot: Bot, session: AsyncSession, attempt) -> None:
                 await bot.stop_poll(chat_id=attempt.chat_id, message_id=attempt.last_message_id)
             except Exception as exc:
                 logger.debug("Could not close the quiz poll", extra={"error": str(exc)[:100]})
-    await safe_send(bot, user.telegram_id, result_text(test, attempt, user, await _source_rows(session, attempt)))
+    from app.keyboards.callbacks import EmpCB
+    from app.keyboards.common import kb
+    from app.models import AnswerReveal
+
+    markup = kb([(t("emp.btn.corrections"), EmpCB(a="corr", id=attempt.id))]) if (
+        attempt.incorrect_count and test.answer_reveal != AnswerReveal.NEVER
+    ) else None
+    delivered = await safe_send(bot, user.telegram_id, result_text(test, attempt, user, await _source_rows(session, attempt)), markup)
+    return delivered is not False  # permanent blocks are not retried every scheduler tick
 
 
 async def _source_rows(session: AsyncSession, attempt) -> list:

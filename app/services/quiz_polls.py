@@ -49,10 +49,10 @@ class PollSpec:
 
 def _explanation(tq: TestQuestion) -> tuple[str | None, bool]:
     parts = []
-    if tq.source_name:
-        parts.append(t("quiz.poll_explanation_source", s=" ".join(tq.source_name.split())))
     if tq.explanation:
         parts.append(t("quiz.poll_explanation", text=" ".join(tq.explanation.split())))
+    if tq.source_name:
+        parts.append(t("quiz.poll_explanation_source", s=" ".join(tq.source_name.split())))
     if not parts:
         return None, False
     text = "\n".join(parts)
