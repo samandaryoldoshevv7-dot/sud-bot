@@ -506,6 +506,39 @@ async def cb_quick_all(callback: CallbackQuery, state: FSMContext, session: Asyn
         await tb.ensure_source(session, test.id, material)
     await session.commit()
     await callback.answer(t("ct.all_added", n=len(materials)))
+    most = _quick_max_tests(len(materials))
+    rows = [[(str(n), AdminCB(s="ct_qn", id=test.id, v=str(n))) for n in QUICK_TEST_COUNTS if n <= most]]
+    if most > 1:
+        rows.append([(t("ct.btn.quick_max", n=most), AdminCB(s="ct_qn", id=test.id, v="max"))])
+    await show(callback, t("ct.ask_quick_count", n=len(materials), q=QUICK_ALL_COUNT), kb(*rows, _cancel_row(test.id)))
+
+
+QUICK_TEST_COUNTS = (1, 5, 10)
+
+
+def _quick_max_tests(materials: int) -> int:
+    """How many 50-question tests the materials can give at most (≤ 300 unique questions per file)."""
+    return max(1, min(MAX_PACK_TESTS, materials * PER_SOURCE // QUICK_ALL_COUNT))
+
+
+@router.callback_query(AdminCB.filter(F.s == "ct_qn"))
+async def cb_quick_count(callback: CallbackQuery, callback_data: AdminCB, session: AsyncSession) -> None:
+    """How many different 50-question tests: 1, 5, 10 or as many as the materials give. More than
+    one: unique hard questions are made first, then split — no question repeats between tests."""
+    test = await _draft(callback, session, callback_data.id)
+    if test is None:
+        return
+    most = _quick_max_tests(len(await tb.source_names(session, test.id)))
+    n = most if callback_data.v == "max" else int(callback_data.v) if (callback_data.v or "").isdigit() else 0
+    if not 1 <= n <= most:
+        return
+    await session.execute(
+        delete(BotSetting).where(BotSetting.key.in_([f"ct_variants:{test.id}", f"ct_pack:{test.id}"]))
+    )
+    if n > 1:
+        await session.merge(BotSetting(key=f"ct_variants:{test.id}", value=n))
+        await session.merge(BotSetting(key=f"ct_pack:{test.id}", value=True))
+    await session.commit()
     await ask_duration(callback, test.id)
 
 

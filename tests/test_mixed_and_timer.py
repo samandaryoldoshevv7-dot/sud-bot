@@ -706,7 +706,7 @@ async def test_one_tap_test_from_all_materials_with_a_typed_time(tg, session_mak
     """🔀 Barcha materiallardan test (50 savol): every ready material, mixed; the admin types the time."""
     from app.keyboards.admin import admin_main_kb
 
-    assert "🔀 Barcha materiallardan test (50 savol)" in [
+    assert "🔀 Barcha materiallardan test (50 savoldan)" in [
         b.text for row in admin_main_kb().inline_keyboard for b in row
     ]
     ids = await _materials(session_maker)
@@ -719,6 +719,18 @@ async def test_one_tap_test_from_all_materials_with_a_typed_time(tg, session_mak
         assert test.question_count == 50 and test.title.startswith("Aralash test — ")
         sources = (await session.execute(select(TestSource.material_id).where(TestSource.test_id == test_id))).scalars()
         assert sorted(sources) == sorted(ids)
+    # How many different 50-question tests: 1, 5, 10 or the most the materials give.
+    buttons = [b.text for row in tg.session.last_markup().inline_keyboard for b in row]
+    most = min(30, len(ids) * 300 // 50)
+    assert buttons[:4] == ["1", "5", "10", f"📦 Maksimal: {most} tagacha test"]
+    await tg(callback_update(ADMIN, AdminCB(s="ct_qn", id=test_id, v="10").pack()))
+    from app.handlers.admin import create_test as ct
+
+    async with session_maker() as session:
+        assert await ct.is_pack(session, test_id) and await ct.variant_count(session, test_id) == 10
+    await tg(callback_update(ADMIN, AdminCB(s="ct_qn", id=test_id, v="1").pack()))  # changed their mind
+    async with session_maker() as session:
+        assert not await ct.is_pack(session, test_id) and await ct.variant_count(session, test_id) == 1
     buttons = [b.text for row in tg.session.last_markup().inline_keyboard for b in row]
     assert buttons[:5] == ["6 soat", "12 soat", "24 soat", "2 kun", "✍️ O'zim kiritaman"]
     await tg(callback_update(ADMIN, AdminCB(s="ct_dc", id=test_id).pack()))
