@@ -67,15 +67,16 @@ def _short(text: str, limit: int) -> str:
 
 
 def _explanation(tq: TestQuestion) -> tuple[str | None, bool]:
-    """Text under the 💡 of the poll (Telegram shows at most 200 characters). The explanation comes
-    first and is always readable to the end: when the source line does not fit too it is left out
-    (it is in the results), and a long explanation is shortened to its first whole sentences."""
+    """Text under the 💡 of the poll (Telegram shows at most 200 characters): the explanation, then
+    the source. The explanation is always readable to the end: when the source line does not fit too
+    it is left out (it is in the results), and a long explanation is shortened to its first whole
+    sentences."""
     source = t("quiz.poll_explanation_source", s=" ".join(tq.source_name.split())) if tq.source_name else None
     if not tq.explanation:
         return (_cut(source, EXPLANATION_MAX) if source and tg_len(source) > EXPLANATION_MAX else source), False
     full = t("quiz.poll_explanation", text=" ".join(tq.explanation.split()))
-    if source and tg_len(f"{source}\n{full}") <= EXPLANATION_MAX:
-        return f"{source}\n{full}", False
+    if source and tg_len(f"{full}\n{source}") <= EXPLANATION_MAX:
+        return f"{full}\n{source}", False
     if tg_len(full) <= EXPLANATION_MAX:
         return full, False
     prefix = t("quiz.poll_explanation", text="")

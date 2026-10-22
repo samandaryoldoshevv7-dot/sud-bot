@@ -11,11 +11,11 @@ from aiogram.types import CallbackQuery, ChatMemberUpdated, Message
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.keyboards.callbacks import AdminCB, GroupAnsCB, GroupStartCB
+from app.keyboards.callbacks import AdminCB, GroupAnsCB, GroupExplanationCB, GroupResultCB, GroupStartCB
 from app.keyboards.common import kb
 from app.locales import t
 from app.models import AnswerReveal
-from app.services import background, group_tests
+from app.services import background, group_results, group_tests
 from app.services import groups as group_service
 from app.services.group_tests import GroupAnswerCode
 from app.services.notifications import deep_link, notify_admins
@@ -208,6 +208,14 @@ async def on_group_poll_answer(bot: Bot, session: AsyncSession, poll_answer, gqm
     if result.code != GroupAnswerCode.ACCEPTED:
         await _tell_why_not_counted(bot, session, tg_user.id, gqm_id, result)
         return
+    if result.reveal == AnswerReveal.IMMEDIATE:
+        from app.models import GroupQuestionMessage, GroupTestPost
+
+        gqm = await session.get(GroupQuestionMessage, gqm_id)
+        post = await session.get(GroupTestPost, gqm.post_id)
+        await group_results.send_personal(
+            bot, post.chat_id, tg_user.id, await group_results.own_explanation(session, gqm, tg_user.id)
+        )
     # Right/wrong and the explanation are on the poll itself; the full result goes to the bot.
     if result.finished and result.attempt is not None:
         await _send_private_result(bot, session, tg_user.id, result)
@@ -256,13 +264,66 @@ async def _send_private_result(bot: Bot, session: AsyncSession, telegram_id: int
     attempt = result.attempt
     user = await session.get(User, attempt.user_id)
     test = await session.get(Test, attempt.test_id)
-    if user is None or test is None or not user.has_private_chat or test.answer_reveal == AnswerReveal.NEVER:
+    if user is None or test is None:
+        return
+    await group_results.notify_result_in_groups(bot, session, attempt, user)
+    if not user.has_private_chat:
         return
     markup = None
-    if attempt.incorrect_count:
+    if attempt.incorrect_count and test.answer_reveal != AnswerReveal.NEVER:
         markup = kb([(t("emp.btn.corrections"), EmpCB(a="corr", id=attempt.id))])
     from app.statistics.sources import attempt_source_breakdown
 
     await safe_send(
         bot, telegram_id, result_text(test, attempt, user, await attempt_source_breakdown(session, attempt.id)), markup
     )
+
+
+async def _result_post(callback: CallbackQuery, session: AsyncSession, post_id: int):
+    from app.models import GroupTestPost, User, UserStatus
+
+    post = await session.get(GroupTestPost, post_id)
+    if post is None or callback.message is None or callback.message.chat.id != post.chat_id:
+        await callback.answer(t("errors.stale_button"), show_alert=True)
+        return None
+    user = (await session.execute(select(User).where(User.telegram_id == callback.from_user.id))).scalar_one_or_none()
+    if user is None or user.status != UserStatus.ACTIVE:
+        await callback.answer(t("gt.alert.blocked"), show_alert=True)
+        return None
+    return post
+
+
+@router.callback_query(GroupResultCB.filter())
+async def cb_group_result(callback: CallbackQuery, callback_data: GroupResultCB, session: AsyncSession, bot: Bot):
+    post = await _result_post(callback, session, callback_data.p)
+    if post is None:
+        return
+    attempt = await group_results.own_attempt(session, post.test_id, callback.from_user.id)
+    if attempt is None:
+        await callback.answer("Siz bu testni hali boshlamagansiz.", show_alert=True)
+        return
+    text = group_results.personal_result(attempt.test, attempt)
+    if await group_results.send_personal(bot, post.chat_id, callback.from_user.id, text, callback.id):
+        await callback.answer("Natijangiz faqat o'zingizga ko'rinadi.")
+    else:
+        # A short private popup remains available on clients without ephemeral support.
+        await callback.answer(truncate(text, 190), show_alert=True)
+
+
+@router.callback_query(GroupExplanationCB.filter())
+async def cb_group_explanation(callback: CallbackQuery, callback_data: GroupExplanationCB,
+                               session: AsyncSession, bot: Bot):
+    from app.models import GroupQuestionMessage
+
+    gqm = await session.get(GroupQuestionMessage, callback_data.m)
+    if gqm is None:
+        await callback.answer(t("errors.stale_button"), show_alert=True)
+        return
+    post = await _result_post(callback, session, gqm.post_id)
+    if post is None:
+        return
+    text = await group_results.own_explanation(session, gqm, callback.from_user.id)
+    if await group_results.send_personal(bot, post.chat_id, callback.from_user.id, text, callback.id):
+        await callback.answer("Javob va izoh faqat sizga ko'rinadi.")
+    else:
+        await callback.answer("Izohni ko'rsatib bo'lmadi. Qayta bosing yoki botdagi «Xatolarni ko'rish»ni oching.", show_alert=True)

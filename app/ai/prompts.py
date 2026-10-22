@@ -69,6 +69,11 @@ QUESTION QUALITY REQUIREMENTS:
 - Do not ask about page numbers, chunk ids, document formatting or the document title itself.
 - Avoid negative questions ("which is NOT ...") and trick questions. No ambiguity.
 - The question must be self-contained and understandable without seeing the source.
+- LANGUAGE: natural, correct literary Uzbek in Latin script (o', g', sh, ch spelled correctly), the
+  way an experienced lawyer writes an exam: no spelling or grammar mistakes, no word-for-word
+  translation, no mixing of languages or scripts. Legal terms exactly as in the source.
+- Options are written in the same grammatical form (e.g. all nouns, or all "...dan keyin" phrases),
+  so the correct one cannot be guessed from its form or length.
 - "explanation": 1-2 short sentences (at most 170 characters) explaining WHY the correct option is
   right, based only on the excerpt; it is shown in a small box, so keep it short and complete.
 - "topic": a short (1-4 words) subject area label, e.g. "Sud ishlarini yuritish", "Protsessual muddatlar".
@@ -219,7 +224,9 @@ Review one multiple-choice question against its source excerpt.
 {GROUNDING_RULES}
 
 Check every item:
-- understandable: the question is clear, grammatical and self-contained.
+- understandable: the question is clear, grammatical and self-contained, written in natural,
+  correct literary Uzbek (Latin script, o'/g' spelled correctly) as a lawyer would write it; false
+  for spelling or grammar mistakes, word-for-word translation, mixed languages or scripts.
 - single_correct: exactly one option is correct according to the excerpt; the marked answer is it.
 - options_meaningful: all options are meaningful, distinct, plausible, no "all/none of the above".
 - ambiguous: true if the wording allows more than one reasonable interpretation or answer.
@@ -251,7 +258,9 @@ Review EACH multiple-choice question independently against ITS OWN source excerp
 {GROUNDING_RULES}
 
 Check every item of every question:
-- understandable: the question is clear, grammatical and self-contained.
+- understandable: the question is clear, grammatical and self-contained, written in natural,
+  correct literary Uzbek (Latin script, o'/g' spelled correctly) as a lawyer would write it; false
+  for spelling or grammar mistakes, word-for-word translation, mixed languages or scripts.
 - single_correct: exactly one option is correct according to the excerpt; the marked answer is it.
 - options_meaningful: all options are meaningful, distinct, plausible, no "all/none of the above".
 - ambiguous: true if the wording allows more than one reasonable interpretation or answer.

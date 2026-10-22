@@ -49,7 +49,7 @@ async def test_questions_come_as_quiz_polls_and_answers_are_final(tg, session_ma
     assert len(poll.options) == 4 and poll.allows_multiple_answers is False
     assert poll.correct_option_ids == [await _correct_index(session_maker, attempt_id, 0)]
     assert poll.allows_revoting is False and poll.shuffle_options is False
-    assert poll.explanation and poll.explanation.startswith("📚 ") and len(poll.explanation) <= 200
+    assert poll.explanation and poll.explanation.startswith("💡 ") and len(poll.explanation) <= 200
     assert [b.text for row in poll.reply_markup.inline_keyboard for b in row] == ["⏳ Qolgan vaqt"]
     assert not any("○ <b>A)</b>" in x for x in tg.session.texts())  # not the classic text question
 
@@ -258,7 +258,7 @@ def test_explanation_is_short_and_readable_to_the_end():
 
     # Fits with the source: both shown.
     tq = TestQuestion(explanation="Ariza 5 kun ichida ko'riladi.", source_name="Konstitutsiya")
-    assert quiz_polls._explanation(tq) == ("📚 Konstitutsiya\n💡 Ariza 5 kun ichida ko'riladi.", False)
+    assert quiz_polls._explanation(tq) == ("💡 Ariza 5 kun ichida ko'riladi.\n📚 Konstitutsiya", False)
     # Too long with the source: the explanation wins, whole.
     tq = TestQuestion(explanation="Sudya arizani besh kun ichida ko'rib chiqadi va qaror qabul qiladi. " * 2,
                       source_name="O'ZBEKISTON RESPUBLIKASI MA'MURIY SUD ISHLARINI YURITISH TO'G'RISIDAGI KODEKSI")  # fmt: skip

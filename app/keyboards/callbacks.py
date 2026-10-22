@@ -53,3 +53,15 @@ class GroupAnsCB(CallbackData, prefix="ga"):
 
     m: int
     o: str
+
+
+class GroupResultCB(CallbackData, prefix="gr"):
+    """Personal result in a group; identity always comes from Telegram."""
+
+    p: int
+
+
+class GroupExplanationCB(CallbackData, prefix="gx"):
+    """Own answer and full explanation for a shared question."""
+
+    m: int

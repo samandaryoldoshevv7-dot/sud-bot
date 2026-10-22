@@ -63,6 +63,7 @@ class StartResult:
 
 
 class AnswerOutcome(str, Enum):
+    BLOCKED = "blocked"
     ACCEPTED = "accepted"
     DUPLICATE = "duplicate"  # already answered / stale button
     NOT_IN_PROGRESS = "not_in_progress"
@@ -226,6 +227,8 @@ async def start_attempt(
         return StartResult(error=StartError.NOT_FOUND)
     if user.status != UserStatus.ACTIVE:
         return StartResult(error=StartError.USER_NOT_ACTIVE)
+    if test.paused and not ignore_pause:
+        return StartResult(error=StartError.PAUSED)
 
     existing = await get_in_progress(session, test_id, user.id)
     if existing is not None:
@@ -243,8 +246,6 @@ async def start_attempt(
         return StartResult(error=StartError.NOT_ACTIVE)
     if now < test.starts_at:
         return StartResult(error=StartError.NOT_STARTED_YET)
-    if test.paused and not ignore_pause:
-        return StartResult(error=StartError.PAUSED)
     if not await user_in_test_audience(session, test, user):
         assignment = await get_assignment(session, test_id, user.id)
         if test.audience == TestAudience.GROUP and assignment is None:
@@ -346,6 +347,8 @@ async def submit_answer(
     now: datetime | None = None,
 ) -> AnswerResult:
     now = now or utcnow()
+    if user.status != UserStatus.ACTIVE:
+        return AnswerResult(AnswerOutcome.BLOCKED)
     user_id = user.id
     telegram_id = user.telegram_id
     # Row lock serialises concurrent clicks on the same attempt.
@@ -556,6 +559,7 @@ async def _latest_attempts(session: AsyncSession, user_id: int, test_ids: list[i
 
 
 class MyTestState(str, Enum):
+    PAUSED = "paused"
     NOT_STARTED = "new"  # 🟢 Ishlanmagan
     IN_PROGRESS = "progress"  # 🟡 Jarayonda
     COMPLETED = "done"  # 🔵 Tugatilgan
@@ -576,7 +580,11 @@ async def my_tests(session: AsyncSession, user: User, now: datetime | None = Non
     running = list(
         (
             await session.execute(
-                select(Test).where(Test.status == TestStatus.ACTIVE, Test.starts_at <= now, Test.deadline_at > now)
+                select(Test).where(
+                    Test.status.in_([TestStatus.ACTIVE, TestStatus.EXPIRED, TestStatus.CLOSED]),
+                    Test.starts_at <= now,
+                    Test.published_at.is_not(None),
+                )
             )
         )
         .scalars()
@@ -614,7 +622,8 @@ async def my_tests(session: AsyncSession, user: User, now: datetime | None = Non
     items: list[MyTest] = []
     for test in by_id.values():
         attempt = latest.get(test.id)
-        open_now = test.id in {x.id for x in running} and not test.paused
+        in_window = test.status == TestStatus.ACTIVE and test.starts_at <= now < test.deadline_at
+        open_now = test.id in {x.id for x in running} and in_window and not test.paused
         if attempt is None:
             state = MyTestState.NOT_STARTED if open_now else MyTestState.EXPIRED
             can_start = open_now
@@ -625,7 +634,12 @@ async def my_tests(session: AsyncSession, user: User, now: datetime | None = Non
         else:
             state, can_start = MyTestState.EXPIRED, open_now and test.id in retakes
         items.append(MyTest(test, attempt, state, can_start))
-    order = {MyTestState.IN_PROGRESS: 0, MyTestState.NOT_STARTED: 1, MyTestState.COMPLETED: 2, MyTestState.EXPIRED: 3}
+        if in_window and test.paused and (
+            attempt is None or (attempt.status == AttemptStatus.IN_PROGRESS and now < attempt.deadline_at)
+        ):
+            items[-1].state, items[-1].can_start = MyTestState.PAUSED, False
+    order = {MyTestState.IN_PROGRESS: 0, MyTestState.NOT_STARTED: 1, MyTestState.PAUSED: 2,
+             MyTestState.COMPLETED: 3, MyTestState.EXPIRED: 4}
     items.sort(key=lambda m: (order[m.state], -(m.test.id)))
     return items[:limit]
 
@@ -652,6 +666,7 @@ async def add_time(session: AsyncSession, attempt_id: int, seconds: int, now: da
         attempt.completed_at = None
         attempt.passed = None
         attempt.duration_seconds = None
+        attempt.expiry_notified_at = None
     else:
         await session.commit()
         raise ValueError("attempt_finished")
