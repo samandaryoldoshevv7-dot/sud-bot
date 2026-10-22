@@ -138,3 +138,19 @@ def _all_difficulties(monkeypatch):
     from app.services.settings_service import SPECS, SettingSpec
 
     monkeypatch.setitem(SPECS, "only_hard_questions", SettingSpec("only_hard_questions", False, "bool"))
+
+
+@pytest.fixture(autouse=True)
+async def _stop_leftover_background_tasks():
+    """All tests share one event loop: background tasks a test started (posting into a group, a
+    waiting 🧠 run…) must not keep running into the next tests and slow them down."""
+    yield
+    import asyncio
+
+    from app.services import background
+
+    leftover = [task for task in list(background._tasks) if not task.done()]
+    for task in leftover:
+        task.cancel()
+    if leftover:
+        await asyncio.gather(*leftover, return_exceptions=True)
