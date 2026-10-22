@@ -263,8 +263,13 @@ TEXTS: dict[str, str] = {
         "(PDF, DOCX, TXT, MD; har biri {mb} MB gacha).\n\nHar bir fayl alohida manba bo'ladi: "
         "masalan «Konstitutsiya.pdf» → manba «Konstitutsiya»."
     ),
-    "menu.quick_all": "🔀 Barcha materiallardan test (50 savol)",
+    "menu.quick_all": "🔀 Barcha materiallardan test (50 savoldan)",
     "ct.quick_all_title": "Aralash test — {date}",
+    "ct.ask_quick_count": (
+        "🔀 <b>Barcha materiallardan aralash test</b> ({n} ta material, eng qiyin savollar)\n\n"
+        "Nechta test tuzilsin? Har biri {q} ta savoldan, testlar bir-birini takrorlamaydi."
+    ),
+    "ct.btn.quick_max": "📦 Maksimal: {n} tagacha test",
     "ct.btn.duration_custom": "✍️ O'zim kiritaman",
     "ct.ask_duration_custom": (
         "⏱ <b>Test vaqtini yozing</b>\n\nMasalan: <code>45 daqiqa</code>, <code>2 soat</code>, "
