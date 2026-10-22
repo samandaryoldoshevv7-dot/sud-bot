@@ -2,6 +2,7 @@
 
 import json
 
+import httpx
 import pytest
 from aiohttp import web
 from groq import AsyncGroq
@@ -80,10 +81,23 @@ async def groq_server(unused_tcp_port_factory=None):
     await runner.cleanup()
 
 
+@pytest.fixture(autouse=True)
+def _fresh_pacer(monkeypatch):
+    """The request pacer is process-wide: start every test without another test's pauses."""
+    monkeypatch.setattr(groq_provider, "_pacer", groq_provider._Pacer())
+
+
 def _provider(base_url: str, max_retries: int = 2) -> GroqProvider:
     settings = Settings(bot_token="x", database_url="postgresql://a@b/c", groq_api_key="gsk_local_test_key")
     provider = GroqProvider(settings)
-    provider._client = AsyncGroq(api_key="gsk_local_test_key", base_url=base_url, max_retries=max_retries)
+    # A generous connect timeout: the local test server shares the event loop with the whole session,
+    # and on a busy CI runner the default 5 s connect timeout was hit before the server accepted.
+    provider._client = AsyncGroq(
+        api_key="gsk_local_test_key",
+        base_url=base_url,
+        max_retries=max_retries,
+        timeout=httpx.Timeout(60.0, connect=30.0),
+    )
     return provider
 
 
