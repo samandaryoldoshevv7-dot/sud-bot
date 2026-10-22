@@ -700,3 +700,34 @@ async def test_variants_are_separate_tests_without_repeated_questions(tg, sessio
         assert not per_test[0] & per_test[1]  # the variants share no question
         assert not (per_test[0] | per_test[1]) & first_test_questions  # nor with the earlier test
         assert await session.get(BotSetting, f"ct_variants:{draft_id}") is None
+
+
+async def test_one_tap_test_from_all_materials_with_a_typed_time(tg, session_maker):  # noqa: F811
+    """🔀 Barcha materiallardan test (50 savol): every ready material, mixed; the admin types the time."""
+    from app.keyboards.admin import admin_main_kb
+
+    assert "🔀 Barcha materiallardan test (50 savol)" in [
+        b.text for row in admin_main_kb().inline_keyboard for b in row
+    ]
+    ids = await _materials(session_maker)
+    async with session_maker() as session:
+        await make_employee(session, ADMIN, "Admin Bosh")
+    await tg(callback_update(ADMIN, AdminCB(s="ct_qall").pack()))
+    async with session_maker() as session:
+        test = (await session.execute(select(Test))).scalar_one()
+        test_id = test.id
+        assert test.question_count == 50 and test.title.startswith("Aralash test — ")
+        sources = (await session.execute(select(TestSource.material_id).where(TestSource.test_id == test_id))).scalars()
+        assert sorted(sources) == sorted(ids)
+    buttons = [b.text for row in tg.session.last_markup().inline_keyboard for b in row]
+    assert buttons[:5] == ["6 soat", "12 soat", "24 soat", "2 kun", "✍️ O'zim kiritaman"]
+    await tg(callback_update(ADMIN, AdminCB(s="ct_dc", id=test_id).pack()))
+    await tg(message_update(ADMIN, "bilmadim"))
+    assert any("Vaqtni tushunmadim" in x for x in tg.session.texts())
+    tg.session.clear()
+    await tg(message_update(ADMIN, "1 soat 30 daqiqa"))
+    assert any("Kimlarga berilsin" in x for x in tg.session.texts())
+    async with session_maker() as session:
+        assert (await session.get(Test, test_id)).duration_seconds == 5400
+    await tg(callback_update(ADMIN, AdminCB(s="ct_a", id=test_id, v="all").pack()))
+    assert any("50 ta savol" in x and "1 soat 30 daqiqa" in x for x in tg.session.texts())

@@ -53,7 +53,7 @@ from app.services.ai_runtime import ai_available, make_generator
 from app.services.mixed_tests import build_mixed_test, prefill_bank
 from app.services.scheduler import launch_test
 from app.utils.text import esc, sha256_bytes, truncate
-from app.utils.time import fmt_dt, fmt_hours, utcnow
+from app.utils.time import fmt_dt, fmt_hours, parse_duration, utcnow
 
 logger = logging.getLogger(__name__)
 router = Router(name="admin_create_test")
@@ -80,6 +80,7 @@ class CreateStates(StatesGroup):
     title = State()
     files = State()
     count = State()
+    duration = State()  # ✍️ the admin types the test time
 
 
 def _cancel_row(test_id: int) -> list:
@@ -416,12 +417,17 @@ async def cb_variants(callback: CallbackQuery, callback_data: AdminCB, session: 
     else:
         return
     await session.commit()
+    await ask_duration(callback, test.id)
+
+
+async def ask_duration(target, test_id: int) -> None:
     await show(
-        callback,
+        target,
         t("ct.ask_duration"),
         kb(
-            *[[(fmt_hours(s / 3600), AdminCB(s="ct_d", id=test.id, v=str(s)))] for s in DURATION_CHOICES],
-            _cancel_row(test.id),
+            *[[(fmt_hours(s / 3600), AdminCB(s="ct_d", id=test_id, v=str(s)))] for s in DURATION_CHOICES],
+            [(t("ct.btn.duration_custom"), AdminCB(s="ct_dc", id=test_id))],
+            _cancel_row(test_id),
         ),
     )
 
@@ -434,6 +440,73 @@ async def cb_duration(callback: CallbackQuery, callback_data: AdminCB, session: 
     test.duration_seconds = int(callback_data.v)
     await session.commit()
     await show_audience(callback, test.id)
+
+
+@router.callback_query(AdminCB.filter(F.s == "ct_dc"))
+async def cb_duration_custom(
+    callback: CallbackQuery, callback_data: AdminCB, state: FSMContext, session: AsyncSession
+) -> None:
+    """✍️ O'zim kiritaman: any time from 5 minutes to 30 days ("45 daqiqa", "3 soat", "1:30", "3 kun")."""
+    if await _draft(callback, session, callback_data.id) is None:
+        return
+    await state.set_state(CreateStates.duration)
+    await state.update_data(ct_test=callback_data.id)
+    await show(callback, t("ct.ask_duration_custom"), kb(_cancel_row(callback_data.id)))
+
+
+@router.message(CreateStates.duration, F.text)
+async def on_duration_custom(message: Message, state: FSMContext, session: AsyncSession) -> None:
+    test_id = int((await state.get_data()).get("ct_test", 0))
+    seconds = parse_duration(message.text or "")
+    if seconds is None:
+        await message.answer(t("ct.err.duration"))
+        return
+    test = await session.get(Test, test_id)
+    if test is None or test.status != TestStatus.DRAFT:
+        await state.set_state(None)
+        await message.answer(t("common.not_found"))
+        return
+    test.duration_seconds = seconds
+    await session.commit()
+    await state.set_state(None)
+    await show_audience(message, test.id)
+
+
+# ------------------------------------------------------------------------------ 🔀 one tap: all materials
+
+
+QUICK_ALL_COUNT = 50
+
+
+@router.callback_query(AdminCB.filter(F.s == "ct_qall"))
+async def cb_quick_all(callback: CallbackQuery, state: FSMContext, session: AsyncSession, user: User) -> None:
+    """🔀 Barcha materiallardan test: every ready material, mixed evenly, 50 questions; the admin then
+    chooses only the time (or types it) and who takes it. Same build as ➕ Test yaratish."""
+    await state.clear()
+    materials = await _ready_materials(session)
+    if not materials:
+        await callback.answer(t("ct.no_materials"), show_alert=True)
+        return
+    now = utcnow()
+    test = await tb.create_test(
+        session,
+        tb.TestDraftData(
+            title=t("ct.quick_all_title", date=fmt_dt(now)),
+            question_count=QUICK_ALL_COUNT,
+            starts_at=now,
+            deadline_at=now + tb.OPEN_WINDOW,
+            answer_reveal=AnswerReveal.IMMEDIATE.value,
+            randomize_questions=True,
+            randomize_options=True,
+            difficulty=TestDifficulty.HARD if await settings_service.only_hard(session) else TestDifficulty.MIXED,
+        ),
+        user.id,
+    )
+    for material in materials:
+        await tb.ensure_source(session, test.id, material)
+    await session.commit()
+    await callback.answer(t("ct.all_added", n=len(materials)))
+    await ask_duration(callback, test.id)
 
 
 async def show_audience(target, test_id: int) -> None:

@@ -7,6 +7,7 @@ message right above it. The explanation may be shortened; the full one is in �
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 from sqlalchemy import delete, select
@@ -47,18 +48,39 @@ class PollSpec:
     preface: str | None = None
 
 
+def _short(text: str, limit: int) -> str:
+    """A long explanation made short enough to be read to the end: whole sentences that fit, or
+    (one very long sentence) cut at a word."""
+    sentences = re.split(r"(?<=[.!?])\s+", text)
+    kept = ""
+    for sentence in sentences:
+        candidate = f"{kept} {sentence}".strip()
+        if tg_len(candidate) > limit:
+            break
+        kept = candidate
+    if kept:
+        return kept
+    cut = _cut(text, limit)[:-1].rstrip()
+    if " " in cut:
+        cut = cut.rsplit(" ", 1)[0].rstrip(" ,;:—-")
+    return cut + "…"
+
+
 def _explanation(tq: TestQuestion) -> tuple[str | None, bool]:
-    parts = []
-    if tq.source_name:
-        parts.append(t("quiz.poll_explanation_source", s=" ".join(tq.source_name.split())))
-    if tq.explanation:
-        parts.append(t("quiz.poll_explanation", text=" ".join(tq.explanation.split())))
-    if not parts:
-        return None, False
-    text = "\n".join(parts)
-    if tg_len(text) <= EXPLANATION_MAX:
-        return text, False
-    return _cut(text, EXPLANATION_MAX), True
+    """Text under the 💡 of the poll (Telegram shows at most 200 characters). The explanation comes
+    first and is always readable to the end: when the source line does not fit too it is left out
+    (it is in the results), and a long explanation is shortened to its first whole sentences."""
+    source = t("quiz.poll_explanation_source", s=" ".join(tq.source_name.split())) if tq.source_name else None
+    if not tq.explanation:
+        return (_cut(source, EXPLANATION_MAX) if source and tg_len(source) > EXPLANATION_MAX else source), False
+    full = t("quiz.poll_explanation", text=" ".join(tq.explanation.split()))
+    if source and tg_len(f"{source}\n{full}") <= EXPLANATION_MAX:
+        return f"{source}\n{full}", False
+    if tg_len(full) <= EXPLANATION_MAX:
+        return full, False
+    prefix = t("quiz.poll_explanation", text="")
+    short = prefix + _short(" ".join(tq.explanation.split()), EXPLANATION_MAX - tg_len(prefix))
+    return short, True
 
 
 def build(attempt: TestAttempt, tq: TestQuestion, item: dict, position: int, reveal: AnswerReveal) -> PollSpec | None:

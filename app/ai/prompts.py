@@ -69,7 +69,8 @@ QUESTION QUALITY REQUIREMENTS:
 - Do not ask about page numbers, chunk ids, document formatting or the document title itself.
 - Avoid negative questions ("which is NOT ...") and trick questions. No ambiguity.
 - The question must be self-contained and understandable without seeing the source.
-- "explanation": 1-3 sentences explaining WHY the correct option is right, based only on the excerpt.
+- "explanation": 1-2 short sentences (at most 170 characters) explaining WHY the correct option is
+  right, based only on the excerpt; it is shown in a small box, so keep it short and complete.
 - "topic": a short (1-4 words) subject area label, e.g. "Sud ishlarini yuritish", "Protsessual muddatlar".
   If one of the EXISTING TOPICS listed in the request fits, use it exactly as written.
 - "difficulty" is "medium" or "hard" (no trivial recall questions):

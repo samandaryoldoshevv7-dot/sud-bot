@@ -88,7 +88,33 @@ def fmt_span(seconds: int | float | None) -> str:
 def fmt_hours(hours: float) -> str:
     if hours >= 24 and hours % 24 == 0:
         return f"{int(hours // 24)} kun" if hours != 24 else "24 soat"
-    return f"{hours:g} soat"
+    if hours == int(hours):
+        return f"{int(hours)} soat"
+    return fmt_span(round(hours * 3600))  # a duration typed by the admin: "1 soat 30 daqiqa", "45 daqiqa"
+
+
+MIN_DURATION_SECONDS = 5 * 60
+MAX_DURATION_SECONDS = 30 * 24 * 3600
+_DURATION_RE = re.compile(r"(\d+(?:[.,]\d+)?)\s*(daqiqa|daq|minut|min|m|soat|s|h|kun|k|d)?\b", re.I)
+_UNIT_SECONDS = {"daqiqa": 60, "daq": 60, "minut": 60, "min": 60, "m": 60,
+                 "soat": 3600, "s": 3600, "h": 3600, "kun": 86400, "k": 86400, "d": 86400}  # fmt: skip
+
+
+def parse_duration(text: str) -> int | None:
+    """Test time typed by the admin: "45 daqiqa", "2 soat", "1,5 soat", "3 kun", "1 soat 30 daqiqa",
+    "1:30" (hours:minutes) or a bare number (hours). Seconds, or None when it can't be understood
+    or is outside 5 minutes … 30 days."""
+    value = (text or "").strip().lower()
+    hm = re.fullmatch(r"(\d{1,3}):(\d{2})", value)
+    if hm:
+        seconds = int(hm.group(1)) * 3600 + int(hm.group(2)) * 60
+    else:
+        parts = _DURATION_RE.findall(value)
+        if not parts or _DURATION_RE.sub("", value).strip(" ,.va"):
+            return None
+        total = sum(float(number.replace(",", ".")) * _UNIT_SECONDS.get(unit, 3600) for number, unit in parts)
+        seconds = round(total)
+    return seconds if MIN_DURATION_SECONDS <= seconds <= MAX_DURATION_SECONDS else None
 
 
 _DT_PATTERNS = [

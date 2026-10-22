@@ -184,6 +184,12 @@ qo'llash, o'xshash qoidalarni farqlash, shart/istisno/muddat/vakolat), «qiyin»
 saqlanmaydi, testlar bankdan faqat qiyin savollarni oladi. Avvalgi o'rtacha savollar bankda qoladi,
 lekin testlarga tushmaydi. Sozlamani o'chirsangiz, o'rtacha/qiyin aralash rejim qaytadi.
 
+**🔀 Bir bosishda: barcha materiallardan test (50 savol).** Admin menyusidagi tugma barcha tayyor materiallarni
+aralash oladi (har biridan teng), 50 savolli test tuzadi; admin faqat vaqtni tanlaydi — 6/12/24 soat, 2 kun yoki
+**✍️ O'zim kiritaman** («45 daqiqa», «2 soat», «1:30», «3 kun»; 5 daqiqadan 30 kungacha) — va kimlarga berilishini.
+**💡 izoh** viktorinada doim oxirigacha o'qiladi: sig'masa manba qatori tushib qoladi (u natijalarda bor), uzun
+izoh birinchi to'liq gaplarigacha qisqartiriladi; AI izohni 170 belgigacha yozadi.
+
 **📚 Barcha materiallardan.** ➕ Test yaratishda fayl yuborish o'rniga **📚 Barcha materiallardan (N ta) — aralash**
 tugmasini bosish mumkin: barcha tayyor materiallar testning manbasi bo'ladi, har bir testda savollar
 materiallar bo'yicha teng va aralash keladi. Keyin 📦 bilan **300 / 500 / 700 / 1000 tagacha** savolni
