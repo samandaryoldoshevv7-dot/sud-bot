@@ -66,11 +66,13 @@ def employee_test_card(test: Test, attempt: TestAttempt | None, sources: list[st
 
 
 def question_text(attempt: TestAttempt, tq: TestQuestion, item: dict, position: int, now=None) -> str:
-    """Quiz-style question: [n/total] question, source, options."""
+    """Quiz-style question: 📚 Manba, ❓ Savol n/total, question, options."""
+    from app.services.quiz_polls import question_head, source_line
+
     now = now or utcnow()
-    lines = [f"<b>[{position + 1}/{attempt.total_questions}]</b> <b>{esc(tq.question_text)}</b>", ""]
-    if tq.source_name:
-        lines += [t("quiz.source", s=esc(tq.source_name)), ""]
+    source = source_line(tq)
+    lines = [f"<b>{esc(source)}</b>"] if source else []
+    lines += [f"<b>{question_head(position, attempt.total_questions)}</b>", "", f"<b>{esc(tq.question_text)}</b>", ""]
     for letter, option in displayed_options(tq, item):
         lines.append(f"○ <b>{letter})</b> {esc(option)}")
     left = (attempt.deadline_at - now).total_seconds()

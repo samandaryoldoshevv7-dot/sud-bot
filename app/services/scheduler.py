@@ -170,9 +170,6 @@ async def notify_time_over(bot: Bot, session: AsyncSession, attempt) -> bool:
     test = await session.get(Test, attempt.test_id)
     if user is None or test is None:
         return True
-    from app.services.group_results import notify_result_in_groups
-
-    await notify_result_in_groups(bot, session, attempt, user)
     if not user.has_private_chat or user.bot_blocked:
         return True  # group button always retrieves the persisted result, even for offline users
     if attempt.chat_id and attempt.last_message_id:

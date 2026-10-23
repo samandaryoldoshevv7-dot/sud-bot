@@ -45,7 +45,7 @@ async def test_questions_come_as_quiz_polls_and_answers_are_final(tg, session_ma
     polls = tg.session.polls()
     assert len(polls) == 1
     poll = polls[0]
-    assert poll.question.startswith("[1/4] ") and poll.type == "quiz" and poll.is_anonymous is False
+    assert poll.question.startswith("📚 Manba: ") and "\n❓ Savol 1/4\n" in poll.question and poll.type == "quiz" and poll.is_anonymous is False
     assert len(poll.options) == 4 and poll.allows_multiple_answers is False
     assert poll.correct_option_ids == [await _correct_index(session_maker, attempt_id, 0)]
     assert poll.allows_revoting is False and poll.shuffle_options is False
@@ -66,7 +66,7 @@ async def test_questions_come_as_quiz_polls_and_answers_are_final(tg, session_ma
         assert not any(x.startswith(f"<b>[{pos + 1}/4]</b>") for x in tg.session.texts())
         if pos < 3:
             current = tg.session.polls()[-1]
-            assert current.question.startswith(f"[{pos + 2}/4] ")
+            assert f"\n❓ Savol {pos + 2}/4\n" in current.question
         # Answering the same poll again (another variant) is ignored: the first answer is final.
         tg.session.clear()
         await tg(poll_answer_update(7101, poll_id, [(choice + 1) % 4]))
@@ -130,7 +130,7 @@ async def test_answers_revealed_later_use_a_plain_poll_without_revoting(tg, sess
     assert poll.allows_revoting is False  # the vote can't be changed
     tg.session.clear()
     await tg(poll_answer_update(7105, poll_id_of(poll), [2]))
-    assert tg.session.polls()[-1].question.startswith("[2/4] ")
+    assert "\n❓ Savol 2/4\n" in tg.session.polls()[-1].question
 
 
 async def test_question_too_long_is_still_a_poll_with_the_full_text_above(tg, session_maker):  # noqa: F811
@@ -146,10 +146,10 @@ async def test_question_too_long_is_still_a_poll_with_the_full_text_above(tg, se
     tg.session.clear()
     await tg(callback_update(7106, EmpCB(a="start", id=test_id).pack(), "Ali"))
     poll = tg.session.polls()[-1]
-    assert poll.question.startswith("[1/4]") and "yuqoridagi xabarda" in poll.question
+    assert "❓ Savol 1/4" in poll.question and "yuqoridagi xabarda" in poll.question
     assert [o[:3] for o in poll.options] == ["A) ", "B) ", "C) ", "D) "]
     assert all(len(o.encode("utf-16-le")) // 2 <= 100 for o in poll.options)
-    preface = next(x for x in tg.session.texts() if x.startswith("<b>[1/4]</b>"))
+    preface = next(x for x in tg.session.texts() if "❓ Savol 1/4" in x and x.startswith("<b>📚 Manba:"))
     assert long_option.strip() in preface  # the full text, nothing cut
     assert not any("○ <b>A)</b>" in x for x in tg.session.texts())  # not the old text look
 

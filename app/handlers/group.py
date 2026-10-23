@@ -208,15 +208,9 @@ async def on_group_poll_answer(bot: Bot, session: AsyncSession, poll_answer, gqm
     if result.code != GroupAnswerCode.ACCEPTED:
         await _tell_why_not_counted(bot, session, tg_user.id, gqm_id, result)
         return
-    if result.reveal == AnswerReveal.IMMEDIATE:
-        from app.models import GroupQuestionMessage, GroupTestPost
-
-        gqm = await session.get(GroupQuestionMessage, gqm_id)
-        post = await session.get(GroupTestPost, gqm.post_id)
-        await group_results.send_personal(
-            bot, post.chat_id, tg_user.id, await group_results.own_explanation(session, gqm, tg_user.id)
-        )
-    # Right/wrong and the explanation are on the poll itself; the full result goes to the bot.
+    # Right/wrong, the correct option and the short explanation with its source are shown by the quiz
+    # poll itself (Telegram's 💡); nothing is posted into the group per answer. The full result goes
+    # to the bot's private chat.
     if result.finished and result.attempt is not None:
         await _send_private_result(bot, session, tg_user.id, result)
 
@@ -266,7 +260,8 @@ async def _send_private_result(bot: Bot, session: AsyncSession, telegram_id: int
     test = await session.get(Test, attempt.test_id)
     if user is None or test is None:
         return
-    await group_results.notify_result_in_groups(bot, session, attempt, user)
+    # No personal message in the group (it filled the group up): the result is in the private chat,
+    # and "📊 Mening natijam" under the test header shows it on request.
     if not user.has_private_chat:
         return
     markup = None

@@ -99,7 +99,11 @@ def answer_keyboard(gqm: GroupQuestionMessage) -> InlineKeyboardMarkup:
 
 
 def render_question(tq: TestQuestion, gqm: GroupQuestionMessage, total: int) -> str:
-    lines = [f"📝 <b>Savol {gqm.position + 1} / {total}</b>", "", f"<b>{esc(tq.question_text)}</b>", ""]
+    from app.services import quiz_polls
+
+    source = quiz_polls.source_line(tq)
+    lines = [f"<b>{esc(source)}</b>"] if source else []
+    lines += [f"📝 <b>Savol {gqm.position + 1} / {total}</b>", "", f"<b>{esc(tq.question_text)}</b>", ""]
     for i, original in enumerate(gqm.opts):
         lines.append(f"<b>{LETTERS[i]})</b> {esc(tq.options[original])}")
     lines += ["", SEPARATOR, t("gt.choose")]
@@ -296,8 +300,7 @@ async def _send_question(bot: Bot, session: AsyncSession, post: GroupTestPost, t
                         what="question-text")  # fmt: skip
         # protect_content: a poll forwarded out of the group could be answered by outsiders.
         msg = await _call(
-            lambda: bot.send_poll(post.chat_id, **quiz_polls.send_kwargs(spec), protect_content=True,
-                                  reply_markup=group_results.explanation_keyboard(gqm.id)),
+            lambda: bot.send_poll(post.chat_id, **quiz_polls.send_kwargs(spec), protect_content=True),
             what="question-poll",
         )
         if msg is not None and msg.poll is not None:

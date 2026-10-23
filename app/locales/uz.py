@@ -129,7 +129,9 @@ TEXTS: dict[str, str] = {
     "quiz.explanation": "💡 Izoh: {text}",
     "quiz.btn.close": "➡️ Keyingi savol",
     "quiz.next_failed": "✅ Javobingiz saqlandi. Keyingi savolni ochish uchun tugmani bosing.",
-    "quiz.poll_see_above": "{head} ⬆️ Savol va variantlar yuqoridagi xabarda",
+    "quiz.poll_see_above": "{head}\n⬆️ Savol va variantlar yuqoridagi xabarda",
+    "quiz.source_head": "📚 Manba: {s}",
+    "quiz.question_head": "❓ Savol {n}/{total}",
     "quiz.btn.time": "⏳ Qolgan vaqt",
     "quiz.time_alert": "⏳ Qolgan vaqt: {d}\n🕓 Tugash: {end}",
     "quiz.poll_explanation_source": "📚 {s}",
@@ -264,6 +266,7 @@ TEXTS: dict[str, str] = {
         "masalan «Konstitutsiya.pdf» → manba «Konstitutsiya»."
     ),
     "menu.quick_all": "🔀 Barcha materiallardan test (50 savoldan)",
+    "menu.ready_variants": "📚 Tayyor testlar (variantlar)",
     "ct.quick_all_title": "Aralash test — {date}",
     "ct.ask_quick_count": (
         "🔀 <b>Barcha materiallardan aralash test</b> ({n} ta material, eng qiyin savollar)\n\n"
@@ -297,19 +300,24 @@ TEXTS: dict[str, str] = {
     "ct.confirm_pack": (
         "📦 <b>{n} ta test × {q} ta savol</b> (jami {total} tagacha). Avval fayllardan noyob savollar tuziladi, "
         "keyin testlarga bo'linadi — savollar testlar orasida takrorlanmaydi. Fayllar kamroq bersa, "
-        "nechta to'liq test chiqsa, shuncha tuziladi."
+        "nechta chiqsa, shuncha tuziladi (oxirgisi kamroq savolli bo'lishi mumkin). Variantlar avtomatik "
+        "yuborilmaydi — har birini o'zingiz boshlaysiz."
     ),
     "ct.pack_filling": "🧠 Fayllardan noyob savollar tuzilmoqda: {have}/{need}…",
     "ct.pack_waiting": (
         "⏸ Tayyor: <b>{have}/{need}</b> ta noyob savol. AI xizmatlarining limiti tugadi.\n"
-        "⏳ Bot o'zi kutadi va <b>{m} daqiqadan keyin — {at} da</b> davom etadi; tugagach testlar tuzilib yuboriladi."
+        "⏳ Bot o'zi kutadi va <b>{m} daqiqadan keyin — {at} da</b> davom etadi; tugagach testlar tuzilib tayyor qilinadi."
     ),
     "ct.pack_exhausted": "fayllarda boshqa noyob savol qolmadi",
     "ct.pack_short": "ℹ️ Fayllardan jami <b>{available} ta</b> noyob savol chiqdi ({reason}), shuning uchun testlar soni shunga moslandi.",
     "ct.variant_title": "{title} — {k}-variant",
     "ct.progress_variant": "⏳ {k}/{n}-variant: savollar tuzilmoqda {done}/{total}",
-    "ct.variants_done": "📚 <b>{title}</b> — {n} ta variant\n\n{lines}\n\n{audience}",
-    "ct.variant_ok": "✅ {k}-variant — {created} ta savol, yuborildi",
+    "ct.variants_done": (
+        "📚 <b>{title}</b> — {n} ta variant tayyor\n\n{lines}\n\n"
+        "Variantlar hech kimga yuborilmadi. Kerakli variantni oching (📂) va «▶️ Guruhda boshlash» yoki "
+        "«📢 E'lon qilish» (shaxsiy chat) ni bosing — boshqa variantlarni keyinroq boshlaysiz."
+    ),
+    "ct.variant_ok": "✅ {k}-variant — {created} ta savol, tayyor",
     "ct.variant_partial": "⚠️ {k}-variant — {created}/{requested} ta savol, yuborilmadi. Sabab: {reason}",
     "ct.btn.variant_open": "📂 {k}",
     "ct.btn.variant_resume": "🔄 {k}-variantni davom ettirish",

@@ -75,6 +75,24 @@ def split_quota(total: int, parts: int) -> list[int]:
     return [base + (1 if i < extra else 0) for i in range(parts)]
 
 
+def split_proportional(total: int, weights: list[int]) -> list[int]:
+    """Shares in proportion to each source's unused questions (largest remainder, never more than a
+    source has): 50 over [300, 100, 100] → [30, 10, 10]."""
+    whole = sum(weights)
+    if whole <= 0 or total <= 0:
+        return [0] * len(weights)
+    total = min(total, whole)
+    exact = [total * w / whole for w in weights]
+    shares = [int(x) for x in exact]
+    order = sorted(range(len(weights)), key=lambda i: -(exact[i] - shares[i]))
+    for i in order:
+        if sum(shares) >= total:
+            break
+        if shares[i] < weights[i]:
+            shares[i] += 1
+    return shares
+
+
 def interleave(groups: list[list], rng: random.Random) -> list:
     """Round-robin over sources (random source order each round, never the same source twice in a
     row while another source still has questions)."""
@@ -254,9 +272,15 @@ async def _build(
             await progress("generating", sum(len(v) for v in picked.values()), test.question_count)
         return len(got)
 
-    quotas = split_quota(test.question_count, len(ready))
     order = list(ready)
     rng.shuffle(order)  # which file gets the extra question of an uneven split
+    # Enough questions in the bank: each file gives in proportion to its unused questions (a bigger
+    # material gives more). Otherwise an even split, and generation fills each file's share.
+    banked = [await unused_bank_count(session, test_id, s.material_id) if s.material_id else 0 for s in order]
+    if sum(banked) >= test.question_count:
+        quotas = split_proportional(test.question_count, banked)
+    else:
+        quotas = split_quota(test.question_count, len(ready))
     for source, quota in zip(order, quotas, strict=True):
         await take(source, quota)
     # Files that could not give their share are compensated by the others.

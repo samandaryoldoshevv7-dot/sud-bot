@@ -209,7 +209,8 @@ async def test_group_messages_and_callbacks_end_to_end(tg, session_maker):
     assert len(sent) == 1 and "YANGI TEST" in sent[0].text
     assert sent[0].reply_markup.inline_keyboard[0][0].text == "📊 Mening natijam"
     polls = tg.session.polls()
-    assert [p.question[:5] for p in polls] == ["[1/3]", "[2/3]", "[3/3]"]
+    assert [p.question.split("\n")[1] for p in polls] == ["❓ Savol 1/3", "❓ Savol 2/3", "❓ Savol 3/3"]
+    assert all(p.question.startswith("📚 Manba: ") for p in polls)  # the source comes first
     assert all(p.is_anonymous is False and len(p.options) == 4 for p in polls)  # who chose what is visible
     assert all(p.type == "regular" for p in polls)  # this test reveals answers only at the end
     # Re-running is idempotent (nothing is posted twice).
@@ -357,7 +358,7 @@ async def test_group_test_is_not_taken_in_the_private_chat(tg, session_maker):
     tg.session.clear()
     await tg(callback_update(9201, EmpCB(a="start", id=test_id).pack(), "Shaxsiy"))
     assert any("guruhda ishlanadi" in a for a in tg.session.alerts())
-    assert not tg.session.polls() and not any("[2/3]" in x for x in tg.session.texts())
+    assert not tg.session.polls() and not any("Savol 2/3" in x for x in tg.session.texts())
     async with session_maker() as session:
         answers = (await session.execute(select(UserAnswer).where(UserAnswer.user_id == user.id))).scalars().all()
         assert [a.position for a in answers] == [0]
