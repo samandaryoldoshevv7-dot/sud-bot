@@ -66,22 +66,27 @@ def _short(text: str, limit: int) -> str:
     return cut + "…"
 
 
+SOURCE_IN_EXPLANATION_MAX = 70  # a long material title is shortened so the explanation keeps its room
+
+
 def _explanation(tq: TestQuestion) -> tuple[str | None, bool]:
-    """Text under the 💡 of the poll (Telegram shows at most 200 characters): the explanation, then
-    the source. The explanation is always readable to the end: when the source line does not fit too
-    it is left out (it is in the results), and a long explanation is shortened to its first whole
-    sentences."""
-    source = t("quiz.poll_explanation_source", s=" ".join(tq.source_name.split())) if tq.source_name else None
+    """Text under the 💡 of the poll (Telegram shows at most 200 characters): a short explanation,
+    then the source — the source is always there. A long explanation is shortened to its first whole
+    sentences (``cut`` = True: the full one is sent to the employee's private chat)."""
+    source = None
+    if tq.source_name:
+        source = t("quiz.poll_explanation_source", s=" ".join(tq.source_name.split()))
+        if tg_len(source) > SOURCE_IN_EXPLANATION_MAX:
+            source = _cut(source, SOURCE_IN_EXPLANATION_MAX)
     if not tq.explanation:
-        return (_cut(source, EXPLANATION_MAX) if source and tg_len(source) > EXPLANATION_MAX else source), False
+        return source, False
     full = t("quiz.poll_explanation", text=" ".join(tq.explanation.split()))
-    if source and tg_len(f"{full}\n{source}") <= EXPLANATION_MAX:
-        return f"{full}\n{source}", False
-    if tg_len(full) <= EXPLANATION_MAX:
-        return full, False
+    tail = f"\n{source}" if source else ""
+    if tg_len(full + tail) <= EXPLANATION_MAX:
+        return full + tail, False
     prefix = t("quiz.poll_explanation", text="")
-    short = prefix + _short(" ".join(tq.explanation.split()), EXPLANATION_MAX - tg_len(prefix))
-    return short, True
+    room = EXPLANATION_MAX - tg_len(prefix) - tg_len(tail)
+    return prefix + _short(" ".join(tq.explanation.split()), room) + tail, True
 
 
 SOURCE_HEAD_MAX = 90  # the material title in the poll question is shortened beyond this

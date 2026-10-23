@@ -25,14 +25,9 @@ async def test_result_is_only_the_clickers_and_never_public(tg, session_maker, s
     for uid, expected in [(9101, "To'g'ri: 1"), (9102, "To'g'ri: 0")]:
         tg.session.clear()
         await tg(callback_update(uid, GroupResultCB(p=post.id).pack(), chat_id=GROUP_CHAT))
-        messages = [r for r in tg.session.requests if isinstance(r, SendMessage)]
-        assert messages and expected in messages[0].text
-        assert all(
-            m.chat_id == GROUP_CHAT
-            and m.ephemeral_message_parameters.receiver_user_id == uid
-            and m.ephemeral_message_parameters.callback_query_id
-            for m in messages
-        )
+        # A popup only the clicker sees; nothing is posted into the group.
+        assert not [r for r in tg.session.requests if isinstance(r, SendMessage)]
+        assert f"{expected}," in tg.session.alerts()[-1]
     # Forged callback from another group is rejected without leaking any result.
     tg.session.clear()
     await tg(callback_update(9101, GroupResultCB(p=post.id).pack(), chat_id=GROUP_CHAT - 1))
@@ -51,12 +46,12 @@ async def test_full_reason_and_shuffled_letters_with_reveal_guards(tg, session_m
     wrong = next(c for c in "ABCD" if c != correct)
     await group_tests.submit_group_answer(session, tg_user(9201), gqm.id, wrong)
     tg.session.clear()
+    await make_employee(session, 9201, "Izoh Oluvchi")
     await tg(callback_update(9201, GroupExplanationCB(m=gqm.id).pack(), chat_id=GROUP_CHAT))
     sent = [r for r in tg.session.requests if isinstance(r, SendMessage)]
+    assert sent and all(int(m.chat_id) == 9201 for m in sent)  # old button: private chat only
     content = "\n".join(m.text for m in sent)
-    assert f"Siz tanladingiz: {wrong})" in content and f"To'g'ri javob: {correct})" in content
-    assert tq.explanation in content and "NOTO'G'RI JAVOB" in content
-    assert all(m.ephemeral_message_parameters.receiver_user_id == 9201 for m in sent)
+    assert f"To'g'ri javob: {correct})" in content and tq.explanation.strip() in content
     test.answer_reveal = AnswerReveal.AFTER_COMPLETION
     await session.commit()
     assert "keyin ochiladi" in await group_results.own_explanation(session, gqm, 9201)
