@@ -52,7 +52,7 @@ async def test_group_test_runs_in_the_group_as_visible_quiz_polls(tg, session_ma
     assert len(sent) == 1 and "YANGI TEST" in sent[0].text
     assert sent[0].reply_markup.inline_keyboard[0][0].text == "📊 Mening natijam"
     polls = _group_polls(tg)
-    assert [p.question[:5] for p in polls] == ["[1/4]", "[2/4]", "[3/4]", "[4/4]"]
+    assert [p.question.split("\n")[1] for p in polls] == [f"❓ Savol {i}/4" for i in range(1, 5)]
     # Not anonymous: once a member has answered, they see who chose what; nobody can change a vote.
     assert all(p.type == "quiz" and p.is_anonymous is False and p.allows_revoting is False for p in polls)
     assert all(not p.hide_results_until_closes for p in polls)
@@ -118,7 +118,7 @@ async def test_test_for_selected_employees_stays_in_the_private_chat(tg, session
     assert dm and _buttons(dm[-1].reply_markup) == ["▶️ TESTNI BOSHLASH"]
     tg.session.clear()
     await tg(callback_update(7821, dm[-1].reply_markup.inline_keyboard[0][0].callback_data, "Ali"))
-    assert tg.session.polls() and tg.session.polls()[-1].question.startswith("[1/4]")
+    assert tg.session.polls() and "❓ Savol 1/4" in tg.session.polls()[-1].question
 
 
 async def test_reminder_for_a_group_test_has_no_private_button(tg, session_maker):  # noqa: F811

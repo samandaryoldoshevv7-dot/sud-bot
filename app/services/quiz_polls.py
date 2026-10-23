@@ -84,6 +84,22 @@ def _explanation(tq: TestQuestion) -> tuple[str | None, bool]:
     return short, True
 
 
+SOURCE_HEAD_MAX = 90  # the material title in the poll question is shortened beyond this
+
+
+def source_line(tq: TestQuestion) -> str | None:
+    """"📚 Manba: <material title the admin gave>" — shown at the start of every question."""
+    name = " ".join((tq.source_name or "").split())
+    if not name:
+        return None
+    line = t("quiz.source_head", s=name)
+    return _cut(line, SOURCE_HEAD_MAX) if tg_len(line) > SOURCE_HEAD_MAX else line
+
+
+def question_head(position: int, total: int) -> str:
+    return t("quiz.question_head", n=position + 1, total=total)
+
+
 def build(attempt: TestAttempt, tq: TestQuestion, item: dict, position: int, reveal: AnswerReveal) -> PollSpec | None:
     """The poll for this employee's question, or None when it does not fit Telegram's limits."""
     return build_for(tq, list(item["opts"]), position, attempt.total_questions, reveal)
@@ -94,21 +110,22 @@ def build_for(tq: TestQuestion, opts: list[str], position: int, total: int, reve
 
     Every question becomes a poll. When the question (300) or an option (100) is longer than
     Telegram allows, the full question and options are sent as a message right above the poll
-    (``preface``) and the poll carries "[n/total] ⬆️ …" and the shortened options. Options are always
-    lettered "A) …", "B) …"."""
+    (``preface``) and the poll carries the heading with "⬆️ …" and the shortened options. Options are
+    always lettered "A) …", "B) …". Every question starts with "📚 Manba: …" and "❓ Savol n/total"."""
     if not all(o in tq.options for o in opts) or not 2 <= len(opts) <= MAX_OPTIONS:
         return None
-    head = f"[{position + 1}/{total}]"
+    source = source_line(tq)
+    head = "\n".join(x for x in (source, question_head(position, total)) if x)
     text = " ".join(tq.question_text.split())
     full_options = [" ".join(tq.options[o].split()) for o in opts]
-    question = f"{head} {text}"
+    question = f"{head}\n{text}"
     letters = [chr(ord("A") + i) for i in range(len(opts))]
     # Options always carry their letter (A, B, C, D), so a question reads the same everywhere.
     options = [f"{L}) {o}" for L, o in zip(letters, full_options, strict=True)]
     preface = None
     if tg_len(question) > QUESTION_MAX or any(not o or tg_len(o) > OPTION_MAX for o in options):
         preface = "\n".join(
-            [f"<b>{head}</b> <b>{esc(text)}</b>", ""]
+            [f"<b>{esc(head)}</b>", "", f"<b>{esc(text)}</b>", ""]
             + [f"<b>{L})</b> {esc(o)}" for L, o in zip(letters, full_options, strict=True)]
         )
         question = t("quiz.poll_see_above", head=head)

@@ -81,11 +81,11 @@ async def cb_list(callback: CallbackQuery, callback_data: AdminCB, session: Asyn
         lines.append(t("tests.empty"))
     rows = [[(t("menu.create_test"), AdminCB(s="ct"))], [(t("tests.btn.new_advanced"), AdminCB(s="tst_new"))]]
     filters = []
-    for st in (TestStatus.DRAFT, TestStatus.ACTIVE, TestStatus.EXPIRED):
+    for st in (TestStatus.DRAFT, TestStatus.READY, TestStatus.ACTIVE, TestStatus.EXPIRED):
         mark = "• " if status == st else ""
         filters.append((mark + t(f"test_status.{st.value}"), AdminCB(s="tst", v=st.value)))
     filters.append((("• " if status is None else "") + t("common.all"), AdminCB(s="tst")))
-    rows.append(filters)
+    rows += [filters[:3], filters[3:]]
     for test in tests:
         rows.append(
             [(f"{STATUS_EMOJI[test.status]} #{test.id} {truncate(test.title, 34)}", AdminCB(s="tst_v", id=test.id))]

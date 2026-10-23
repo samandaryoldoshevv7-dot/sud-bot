@@ -124,7 +124,7 @@ async def test_user_flow_start_timer_answer_close_next_result(tg, session_maker)
         attempt_id = attempt.id
     texts = tg.session.texts()
     assert any("Boshlanish:" in x and "Tugash:" in x for x in texts)
-    question = next(x for x in texts if "<b>[1/4]</b>" in x)
+    question = next(x for x in texts if "<b>❓ Savol 1/4</b>" in x)
     assert "📚 Manba: " in question and "○ <b>A)</b>" in question
     buttons = [b.text for row in tg.session.last_markup().inline_keyboard for b in row]
     assert len(buttons) == 4 and buttons[0].startswith("A) ")  # one tappable button per variant
@@ -156,7 +156,7 @@ async def test_user_flow_start_timer_answer_close_next_result(tg, session_maker)
         tg.session.clear()
         await tg(callback_update(7001, EmpCB(a="next", id=attempt_id).pack(), "Ali"))
         if pos < 3:
-            assert any(f"<b>[{pos + 2}/4]</b>" in x for x in tg.session.texts())
+            assert any(f"<b>❓ Savol {pos + 2}/4</b>" in x for x in tg.session.texts())
             async with session_maker() as session:
                 assert (await session.get(TestAttempt, attempt_id)).status == AttemptStatus.IN_PROGRESS
     final = tg.session.texts()[-1]
@@ -360,7 +360,7 @@ async def test_admin_creates_mixed_test_through_the_bot(tg, session_maker):  # n
     await tg(callback_update(ADMIN, AdminCB(s="ct_n", id=test_id, v="8").pack()))
     variants = [b.text for row in tg.session.last_markup().inline_keyboard for b in row if b.text != "❌ Bekor qilish"]
     assert variants[:5] == ["1", "2", "3", "4", "5"] and any("Nechta variant" in x for x in tg.session.texts())
-    assert variants[5:] == []  # 📦 would make more than 30 tests of 8: not offered
+    assert variants[5:] and all(v.startswith("📦") for v in variants[5:])  # 📦 300…1000 split into tests of 8
     await tg(callback_update(ADMIN, AdminCB(s="ct_vn", id=test_id, v="1").pack()))
     durations = [b.text for row in tg.session.last_markup().inline_keyboard for b in row if b.text != "❌ Bekor qilish"]
     assert durations[:4] == ["6 soat", "12 soat", "24 soat", "2 kun"] and len(DURATION_CHOICES) == 4
@@ -682,6 +682,11 @@ async def test_variants_are_separate_tests_without_repeated_questions(tg, sessio
     assert (
         "2 ta variant" in summary and "✅ 1-variant — 4 ta savol" in summary and "✅ 2-variant — 4 ta savol" in summary
     )
+    assert "hech kimga yuborilmadi" in summary
+    sent = [m for m in tg.session.requests if hasattr(m, "chat_id") and m.chat_id is not None]
+    assert {int(m.chat_id) for m in sent} <= {ADMIN} and not tg.session.polls()  # no employee or group got anything
+    buttons = [b.text for row in tg.session.last_markup().inline_keyboard for b in row]
+    assert buttons == ["📂 1", "📂 2", "📚 Tayyor testlar (variantlar)"]
     async with session_maker() as session:
         tests = (
             (await session.execute(select(Test).where(Test.title.like("Sud amaliyoti — %-variant")).order_by(Test.id)))
@@ -689,7 +694,8 @@ async def test_variants_are_separate_tests_without_repeated_questions(tg, sessio
             .all()
         )
         assert [x.title for x in tests] == ["Sud amaliyoti — 1-variant", "Sud amaliyoti — 2-variant"]
-        assert all(x.status == TestStatus.ACTIVE for x in tests)
+        # Variants are only made ready: nothing is published or sent until the admin starts one.
+        assert all(x.status == TestStatus.READY and x.published_at is None for x in tests)
         per_test = []
         for x in tests:
             ids = set(

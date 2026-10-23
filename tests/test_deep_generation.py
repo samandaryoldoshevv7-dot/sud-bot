@@ -325,7 +325,7 @@ async def test_pack_makes_unique_questions_then_splits_them_into_tests(tg, sessi
     await ct.build_and_send(session_maker, tg.bot, draft_id, ADMIN, msg.message_id)
     summary = tg.session.texts()[-1]
     assert "✅ 1-variant — 20 ta savol" in summary and "✅ 2-variant — 20 ta savol" in summary
-    assert "3-variant — 15/20" in summary  # the rest, not sent: the admin may send it as is
+    assert "✅ 3-variant — 15 ta savol, tayyor" in summary  # the last variant takes the rest: 55 = 20 + 20 + 15
     assert "jami <b>55 ta</b> noyob savol" in summary
     assert any("noyob savollar tuzilmoqda" in x for x in tg.session.texts())
 
@@ -337,7 +337,8 @@ async def test_pack_makes_unique_questions_then_splits_them_into_tests(tg, sessi
             .all()
         )
         assert len(tests) == 3  # no empty 4th…15th tests
-        assert [x.status for x in tests[:2]] == [TestStatus.ACTIVE, TestStatus.ACTIVE]
+        assert [x.status for x in tests] == [TestStatus.READY] * 3  # ready, none sent: the admin starts each
+        assert [x.question_count for x in tests] == [20, 20, 15]
         seen: set[int] = set()
         for x in tests:
             ids = list(

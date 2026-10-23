@@ -148,7 +148,7 @@ async def test_employee_takes_test_via_buttons(tg, session_maker):
     assert any("Sud amaliyoti" in t for t in s.texts())
     s.clear()
     await tg(callback_update(4000, EmpCB(a="start", id=test_id).pack()))
-    assert any("<b>[1/2]</b>" in t and "📚 Manba:" in t and "○ <b>A)</b>" in t for t in s.texts())
+    assert any(t.startswith("<b>📚 Manba:") and "<b>❓ Savol 1/2</b>" in t and "○ <b>A)</b>" in t for t in s.texts())
     # Double click on START does not create a second attempt.
     await tg(callback_update(4000, EmpCB(a="start", id=test_id).pack()))
     async with session_maker() as session:

@@ -65,7 +65,7 @@ VARIANT_CHOICES = (1, 2, 3, 4, 5)
 PACK_TOTALS = (300, 500, 700, 1000)
 PACK_TOTAL = PACK_TOTALS[0]
 PER_SOURCE = 300
-MAX_PACK_TESTS = 30  # more tests than this at once: too many messages for admins and employees
+MAX_PACK_TESTS = 200  # variants are only made ready (not sent), so many are fine; ≤ 300 questions per file
 MAX_TEST_QUESTIONS = tb.MAX_TEST_QUESTIONS
 USERS_PAGE = 8
 MATERIAL_ICON = {
@@ -798,7 +798,8 @@ async def _build_variants(
     pack: bool = False,
 ) -> None:
     """N variants = N separate tests with the same files and settings. They are built one after the
-    other, so each takes only questions no earlier test (or variant) has used; complete ones are sent.
+    other, so each takes only questions no earlier test (or variant) has used. Variants are only made
+    READY, never sent: the admin starts each one later (in a group or in private chats) on its own.
 
     📦 ``pack``: first up to 300 unique questions are made from the files (🧠 deep generation, never
     padded), then split into tests of the chosen size — as many full tests as the files really give."""
@@ -885,8 +886,18 @@ async def _build_variants(
 
             vid = ids[k - 1]
             report = await build_mixed_test(session_maker, vid, make_generator if ai_available() else None, progress)
+            if report.created and report.missing and pack:
+                # The last variant of a pack takes the remaining unique questions (e.g. 37 of 50);
+                # nothing is padded or repeated.
+                async with session_maker() as session:
+                    try:
+                        await tb.shrink_to_available(session, vid)
+                    except tb.TestStateError:
+                        pass
+                    else:
+                        report.requested = report.created
             if report.created and report.missing == 0:
-                await publish_and_send(session_maker, bot, vid)
+                await make_ready(session_maker, vid)
             if report.created == 0 and vid != test_id:
                 async with session_maker() as session:  # nothing could be added: no empty test is kept
                     try:
@@ -909,11 +920,9 @@ async def _build_variants(
             if report.created:
                 rows.append([(t("ct.btn.variant_send_partial", k=k, n=report.created), AdminCB(s="ct_part", id=vid))])
     opens = [(t("ct.btn.variant_open", k=k), AdminCB(s="tst_v", id=vid)) for k, vid, _ in results]
-    rows += [opens[i : i + 5] for i in range(0, len(opens), 5)]
-    async with session_maker() as session:
-        test = await session.get(Test, test_id)
-        label = await audience_label(session, test) if test else ""
-    text = t("ct.variants_done", title=esc(title), n=len(results), lines="\n".join(lines), audience=label)
+    rows += [opens[i : i + 5] for i in range(0, min(len(opens), VARIANT_BUTTONS), 5)]
+    rows.append([(t("menu.ready_variants"), AdminCB(s="tst", v=TestStatus.READY.value))])
+    text = t("ct.variants_done", title=esc(title), n=len(results), lines="\n".join(lines))
     if pack_note:
         text += "\n\n" + pack_note
     if spent.requests or spent.cache_hits:
@@ -923,6 +932,20 @@ async def _build_variants(
         await bot.edit_message_text(text, chat_id=chat_id, message_id=message_id, reply_markup=kb(*rows))
     except TelegramBadRequest:
         await bot.send_message(chat_id, text, reply_markup=kb(*rows))
+
+
+VARIANT_BUTTONS = 50  # Telegram allows ~100 buttons; the rest are in 📚 Tayyor variantlar
+
+
+async def make_ready(session_maker: async_sessionmaker[AsyncSession], test_id: int) -> None:
+    """DRAFT → READY: complete, but not published; the admin starts it later (▶️ Guruhda boshlash)."""
+    async with session_maker() as session:
+        test = await session.get(Test, test_id)
+        if test is not None and test.status == TestStatus.DRAFT:
+            try:
+                await tb.mark_ready(session, test_id)
+            except tb.TestStateError:
+                pass
 
 
 async def publish_and_send(session_maker: async_sessionmaker[AsyncSession], bot: Bot, test_id: int) -> None:

@@ -942,7 +942,9 @@ async def list_tests(session: AsyncSession, page: int, status: TestStatus | None
     if status:
         base = base.where(Test.status == status)
     total = (await session.execute(select(func.count()).select_from(base.subquery()))).scalar_one()
-    rows = await session.execute(base.order_by(Test.created_at.desc()).offset(page * PAGE_SIZE).limit(PAGE_SIZE))
+    rows = await session.execute(
+        base.order_by(Test.created_at.desc(), Test.id.desc()).offset(page * PAGE_SIZE).limit(PAGE_SIZE)
+    )
     return list(rows.scalars().all()), total
 
 
