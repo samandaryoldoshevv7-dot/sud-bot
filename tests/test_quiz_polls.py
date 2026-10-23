@@ -168,12 +168,13 @@ async def test_long_explanation_is_cut_on_the_poll_and_no_card_is_sent(tg, sessi
     poll = tg.session.polls()[-1]
     # Shortened to whole sentences: readable to the end, nothing cut in the middle.
     assert len(poll.explanation) <= 200 and poll.explanation.startswith("💡 ")
-    assert poll.explanation.endswith("belgilaydi.") and "📚" not in poll.explanation
+    assert "belgilaydi.\n📚 " in poll.explanation  # whole sentences, then always the source
     async with session_maker() as session:
         attempt_id = (await session.execute(select(TestAttempt.id).where(TestAttempt.test_id == test_id))).scalar_one()
     tg.session.clear()
     await tg(poll_answer_update(7107, poll_id_of(poll), [await _correct_index(session_maker, attempt_id, 0)]))
-    assert not any("💡 Izoh:" in x for x in tg.session.texts())  # full explanations: 📋 Xatolarni ko'rish
+    # Private chat: the 💡 was shortened, so the whole explanation is in 📋 Xatolarni ko'rish.
+    assert not any("💡 Izoh:" in x for x in tg.session.texts())
 
 
 def test_classic_mode_is_still_available(monkeypatch):
@@ -259,12 +260,12 @@ def test_explanation_is_short_and_readable_to_the_end():
     # Fits with the source: both shown.
     tq = TestQuestion(explanation="Ariza 5 kun ichida ko'riladi.", source_name="Konstitutsiya")
     assert quiz_polls._explanation(tq) == ("💡 Ariza 5 kun ichida ko'riladi.\n📚 Konstitutsiya", False)
-    # Too long with the source: the explanation wins, whole.
+    # Too long with the source: whole sentences of the explanation, then the (shortened) source.
     tq = TestQuestion(explanation="Sudya arizani besh kun ichida ko'rib chiqadi va qaror qabul qiladi. " * 2,
                       source_name="O'ZBEKISTON RESPUBLIKASI MA'MURIY SUD ISHLARINI YURITISH TO'G'RISIDAGI KODEKSI")  # fmt: skip
     text, _ = quiz_polls._explanation(tq)
-    assert text.startswith("💡 Sudya") and "📚" not in text and text.endswith("qiladi.")
+    assert text.startswith("💡 Sudya") and "qiladi.\n📚 O'ZBEKISTON" in text and quiz_polls.tg_len(text) <= 200
     # One endless sentence: cut at a word, with "…".
     tq = TestQuestion(explanation="juda uzun izoh " * 40, source_name="Qonun")
     text, cut = quiz_polls._explanation(tq)
-    assert cut and quiz_polls.tg_len(text) <= 200 and text.endswith("izoh…")
+    assert cut and quiz_polls.tg_len(text) <= 200 and text.endswith("…\n📚 Qonun")

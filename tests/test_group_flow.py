@@ -390,7 +390,7 @@ async def test_group_answer_sends_nothing_to_the_private_chat(tg, session_maker)
     tg.session.clear()
     await tg(callback_update(8101, GroupAnsCB(m=first.id, o=wrong).pack(), "Sardor", chat_id=GROUP_CHAT))
     alert = tg.session.alerts()[-1]
-    assert alert.startswith("❌ NOTO'G'RI JAVOB") and f"To'g'ri javob: {correct}" in alert and len(alert) <= 200
+    assert alert.startswith(f"❌ To'g'ri javob: {correct}") and "tanladingiz" not in alert and len(alert) <= 200
     assert tg.session.sent_to(8101) == [] and tg.session.sent_to(GROUP_CHAT) == []
 
 

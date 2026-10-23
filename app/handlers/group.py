@@ -209,8 +209,10 @@ async def on_group_poll_answer(bot: Bot, session: AsyncSession, poll_answer, gqm
         await _tell_why_not_counted(bot, session, tg_user.id, gqm_id, result)
         return
     # Right/wrong, the correct option and the short explanation with its source are shown by the quiz
-    # poll itself (Telegram's 💡); nothing is posted into the group per answer. The full result goes
-    # to the bot's private chat.
+    # poll itself (Telegram's 💡); nothing is posted into the group per answer. Only when the
+    # explanation did not fit under 💡, the bot writes it to the employee's private chat.
+    if result.reveal == AnswerReveal.IMMEDIATE:
+        await _send_full_explanation(bot, session, tg_user.id, result)
     if result.finished and result.attempt is not None:
         await _send_private_result(bot, session, tg_user.id, result)
 
@@ -224,6 +226,32 @@ async def cb_group_answer(callback: CallbackQuery, callback_data: GroupAnsCB, se
         return
     if result.finished and result.attempt is not None:
         await _send_private_result(bot, session, callback.from_user.id, result)
+
+
+async def _send_full_explanation(bot: Bot, session: AsyncSession, telegram_id: int, result) -> None:
+    """The 💡 explanation was shortened: send the whole one privately — ✅ To'g'ri, or ❌ and the
+    correct answer; then the explanation and the source. Nothing else."""
+    from app.models import User
+    from app.services import quiz_polls
+    from app.services.notifications import safe_send
+
+    tq = result.question
+    if tq is None or not tq.explanation or not quiz_polls._explanation(tq)[1]:
+        return
+    user = (await session.execute(select(User).where(User.telegram_id == telegram_id))).scalar_one_or_none()
+    if user is None or not user.has_private_chat or user.bot_blocked:
+        return
+    verdict = (
+        t("gt.private.correct")
+        if result.is_correct
+        else t("gt.private.wrong", correct=result.correct, text=esc(result.correct_text))
+    )
+    lines = [f"<b>{quiz_polls.question_head(result.position, result.total)}</b>", verdict, "",
+             t("quiz.explanation", text=esc(" ".join(tq.explanation.split())))]  # fmt: skip
+    source = quiz_polls.source_line(tq)
+    if source:
+        lines.append(esc(source))
+    await safe_send(bot, telegram_id, "\n".join(lines))
 
 
 _TOLD: set[tuple[int, int, str]] = set()  # (telegram id, post, reason): told once, not per poll
@@ -297,12 +325,8 @@ async def cb_group_result(callback: CallbackQuery, callback_data: GroupResultCB,
     if attempt is None:
         await callback.answer("Siz bu testni hali boshlamagansiz.", show_alert=True)
         return
-    text = group_results.personal_result(attempt.test, attempt)
-    if await group_results.send_personal(bot, post.chat_id, callback.from_user.id, text, callback.id):
-        await callback.answer("Natijangiz faqat o'zingizga ko'rinadi.")
-    else:
-        # A short private popup remains available on clients without ephemeral support.
-        await callback.answer(truncate(text, 190), show_alert=True)
+    # A popup only the clicker sees — nothing is posted into the group.
+    await callback.answer(truncate(group_results.short_result(attempt.test, attempt), 190), show_alert=True)
 
 
 @router.callback_query(GroupExplanationCB.filter())
@@ -317,8 +341,9 @@ async def cb_group_explanation(callback: CallbackQuery, callback_data: GroupExpl
     post = await _result_post(callback, session, gqm.post_id)
     if post is None:
         return
+    # Old buttons: the explanation goes to the private chat (nothing is posted into the group).
+    from app.services.notifications import safe_send
+
     text = await group_results.own_explanation(session, gqm, callback.from_user.id)
-    if await group_results.send_personal(bot, post.chat_id, callback.from_user.id, text, callback.id):
-        await callback.answer("Javob va izoh faqat sizga ko'rinadi.")
-    else:
-        await callback.answer("Izohni ko'rsatib bo'lmadi. Qayta bosing yoki botdagi «Xatolarni ko'rish»ni oching.", show_alert=True)
+    sent = await safe_send(bot, callback.from_user.id, esc(text))
+    await callback.answer(t("gt.alert.sent_private") if sent else truncate(text, 190), show_alert=True)

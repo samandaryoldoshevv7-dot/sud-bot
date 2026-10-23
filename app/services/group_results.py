@@ -129,6 +129,19 @@ def personal_result(test: Test, attempt: TestAttempt) -> str:
     return "\n".join(lines)
 
 
+def short_result(test: Test, attempt: TestAttempt) -> str:
+    """The result for a popup (at most ~190 characters), seen only by the one who pressed."""
+    active = attempt.status == AttemptStatus.IN_PROGRESS
+    lines = [f"Javob berildi: {attempt.answered_count}/{attempt.total_questions}"]
+    if not active or test.answer_reveal == AnswerReveal.IMMEDIATE:
+        lines.append(
+            f"To'g'ri: {attempt.correct_count}, noto'g'ri: {attempt.incorrect_count} "
+            f"({pct(attempt.correct_count * 100 / max(1, attempt.total_questions))})"
+        )
+    lines.append("Test davom etmoqda" if active else "Test yakunlangan")
+    return "\n".join(lines)
+
+
 async def own_explanation(session: AsyncSession, gqm: GroupQuestionMessage, telegram_id: int) -> str:
     post = await session.get(GroupTestPost, gqm.post_id)
     test = await session.get(Test, post.test_id)

@@ -144,3 +144,30 @@ async def test_group_answers_post_nothing_into_the_group(tg, session_maker, monk
     for poll in polls:  # wrong answers too: the poll itself shows the correct one
         await tg(poll_answer_update(7901, poll_id_of(poll), [(poll.correct_option_ids[0] + 1) % 4], "Ali"))
     assert tg.session.sent_to(GROUP_CHAT) == [] and personal == []
+
+
+async def test_explanation_too_long_for_the_poll_goes_to_the_private_chat_only(tg, session_maker):  # noqa: F811
+    """💡 holds 200 characters: a longer explanation is shortened there (the source stays), and the bot
+    writes the whole one to the employee's private chat — ✅ To'g'ri, or ❌ with the correct answer."""
+    from tests.telegram_mock import message_update
+
+    await tg(message_update(7951, "/start", "Ali"))  # Ali has opened the bot
+    test_id = await _setup(session_maker, for_group=True)
+    async with session_maker() as session:
+        for tq in (await session.execute(select(TestQuestion).where(TestQuestion.test_id == test_id))).scalars():
+            tq.explanation = "Bu qoida sud ishlarini ko'rib chiqish tartibini batafsil belgilaydi. " * 5
+        await session.commit()
+    tg.session.clear()
+    await launch_test(tg.bot, session_maker, test_id)
+    polls = _group_polls(tg)
+    assert all("\n📚 " in p.explanation for p in polls)  # the source is always under 💡
+    tg.session.clear()
+    first, second = polls[0], polls[1]
+    await tg(poll_answer_update(7951, poll_id_of(first), [first.correct_option_ids[0]], "Ali"))
+    await tg(poll_answer_update(7951, poll_id_of(second), [(second.correct_option_ids[0] + 1) % 4], "Ali"))
+    assert tg.session.sent_to(GROUP_CHAT) == []
+    private = [m.text for m in tg.session.sent_to(7951)]
+    assert len(private) == 2
+    assert "❓ Savol 1/4" in private[0] and "✅ To'g'ri" in private[0]
+    assert "❓ Savol 2/4" in private[1] and "❌ To'g'ri javob: " in private[1]
+    assert all("💡 Izoh:" in x and "📚 Manba:" in x and "tanladingiz" not in x for x in private)
